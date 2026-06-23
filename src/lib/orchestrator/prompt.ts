@@ -5,7 +5,11 @@ import type { Project, Task } from "../types";
  * and .mcp.json are picked up automatically by the CLI (cwd = repo), so this
  * prompt focuses on the task, the project rules, and the finalization contract.
  */
-export function buildPrompt(project: Project, task: Task): string {
+export function buildPrompt(
+  project: Project,
+  task: Task,
+  extraContext = "",
+): string {
   const sourceLabel =
     task.source_type === "manual"
       ? "manual"
@@ -24,6 +28,13 @@ export function buildPrompt(project: Project, task: Task): string {
     task.url ? `Link: ${task.url}` : "",
     `\nDescription:\n${task.description || "(no description provided)"}`,
   );
+
+  if (extraContext.trim()) {
+    sections.push(
+      `\n## Additional context from ${sourceLabel}`,
+      extraContext.trim(),
+    );
+  }
 
   if (project.prompt_rules.trim()) {
     sections.push(

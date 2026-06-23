@@ -21,8 +21,34 @@ export interface IntegrationProvider {
   resolveTask?(
     config: Record<string, unknown>,
     externalId: string,
+    opts?: { status?: string },
   ): Promise<ProviderTestResult>;
+  /** Options to build a source filter (lists / projects) — for UI dropdowns. */
+  fetchSourceMeta?(config: Record<string, unknown>): Promise<SourceMeta>;
+  /** ClickUp: statuses available in a given list. */
+  fetchListStatuses?(
+    config: Record<string, unknown>,
+    listId: string,
+  ): Promise<string[]>;
+  /**
+   * Fresh, rich context for the prompt at run time: full description, comments,
+   * attachments (incl. image URLs), etc. Optional.
+   */
+  fetchTaskContext?(
+    config: Record<string, unknown>,
+    externalId: string,
+  ): Promise<string>;
 }
+
+export type SourceMeta =
+  | {
+      type: "clickup";
+      lists: { id: string; name: string; path: string }[];
+    }
+  | {
+      type: "sentry";
+      projects: { slug: string; name: string }[];
+    };
 
 export async function fetchJson(
   url: string,

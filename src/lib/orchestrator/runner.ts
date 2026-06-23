@@ -179,9 +179,23 @@ async function finalizeRun(
       const integ = await getIntegration(task.integration_id);
       const provider = integ ? getProvider(integ.type) : null;
       if (integ && provider?.resolveTask) {
+        // For ClickUp, pass the per-source "estado al completar" target.
+        let opts: { status?: string } | undefined;
+        if (integ.type === "clickup") {
+          const raw = task.raw as { list?: { id?: string } } | null;
+          const listId = raw?.list?.id ? String(raw.list.id) : undefined;
+          const src =
+            project.sources.find(
+              (s) =>
+                s.type === "clickup" &&
+                (!listId || String(s.filter.listId) === listId),
+            ) || project.sources.find((s) => s.type === "clickup");
+          opts = { status: src?.filter.doneStatus as string | undefined };
+        }
         const r = await provider.resolveTask(
           integ.config as unknown as Record<string, unknown>,
           task.external_id,
+          opts,
         );
         appendLine(logPath, { type: "leo_resolve", ok: r.ok, message: r.message });
       }
@@ -222,7 +236,6 @@ function watchRun(
 
 export async function startRun(task: Task, project: Project): Promise<Run> {
   const settings = await getSettings();
-  const prompt = buildPrompt(project, task);
 
   const runRow = await createRun({
     task_id: task.id,
@@ -255,6 +268,25 @@ export async function startRun(task: Task, project: Project): Promise<Run> {
     return failRun(runRow.id, task.id, logPath, msg);
   }
 
+  // Enrich the prompt with fresh source context (ClickUp description, comments,
+  // attachments/images, etc.). Best-effort — never blocks the run.
+  let extraContext = "";
+  if (task.integration_id && task.source_type !== "manual") {
+    try {
+      const integ = await getIntegration(task.integration_id);
+      const provider = integ ? getProvider(integ.type) : null;
+      if (integ && provider?.fetchTaskContext) {
+        extraContext = await provider.fetchTaskContext(
+          integ.config as unknown as Record<string, unknown>,
+          task.external_id,
+        );
+      }
+    } catch {
+      /* best-effort context */
+    }
+  }
+
+  const prompt = buildPrompt(project, task, extraContext);
   const args = buildArgs(project, prompt);
   appendLine(logPath, {
     type: "leo_start",

@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { FolderPicker } from "@/components/FolderPicker";
+import { SourceEditor } from "@/components/SourceEditor";
 import { Field } from "@/components/ui";
 import type {
   Integration,
@@ -105,31 +106,6 @@ export function ProjectForm({
   const [picker, setPicker] = useState(false);
   const set = <K extends keyof Draft>(k: K, v: Draft[K]) =>
     setDraft({ ...draft, [k]: v });
-
-  const addSource = () => {
-    const first = integrations[0];
-    if (!first) return;
-    set("sources", [
-      ...draft.sources,
-      { integration_id: first.id, type: first.type, filter: {} },
-    ]);
-  };
-
-  const updateSource = (i: number, patch: Partial<ProjectSource>) => {
-    const next = draft.sources.slice();
-    next[i] = { ...next[i], ...patch };
-    set("sources", next);
-  };
-  const updateFilter = (i: number, key: string, value: unknown) => {
-    const next = draft.sources.slice();
-    next[i] = { ...next[i], filter: { ...next[i].filter, [key]: value } };
-    set("sources", next);
-  };
-  const removeSource = (i: number) =>
-    set(
-      "sources",
-      draft.sources.filter((_, idx) => idx !== i),
-    );
 
   return (
     <div style={{ display: "grid", gap: 14 }}>
@@ -293,125 +269,11 @@ export function ProjectForm({
         </div>
       </div>
 
-      {/* Sources */}
-      <div style={{ borderTop: "1px solid var(--border)", paddingTop: 14 }}>
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "space-between",
-            alignItems: "center",
-            marginBottom: 8,
-          }}
-        >
-          <span style={{ fontWeight: 600, fontSize: 13 }}>
-            Fuentes de eventos
-          </span>
-          <button
-            className="btn btn-sm"
-            onClick={addSource}
-            disabled={integrations.length === 0}
-          >
-            + Agregar fuente
-          </button>
-        </div>
-        {integrations.length === 0 && (
-          <div className="hint">
-            Crea una integración primero para poder enlazar fuentes.
-          </div>
-        )}
-        {draft.sources.map((src, i) => {
-          const integ = integrations.find((x) => x.id === src.integration_id);
-          const type = integ?.type ?? src.type;
-          return (
-            <div
-              key={i}
-              className="card"
-              style={{ padding: 12, marginBottom: 8, background: "var(--panel-2)" }}
-            >
-              <div
-                style={{
-                  display: "flex",
-                  gap: 10,
-                  alignItems: "center",
-                  marginBottom: 10,
-                }}
-              >
-                <select
-                  className="select"
-                  value={src.integration_id}
-                  onChange={(e) => {
-                    const id = Number(e.target.value);
-                    const it = integrations.find((x) => x.id === id);
-                    updateSource(i, {
-                      integration_id: id,
-                      type: it?.type ?? src.type,
-                      filter: {},
-                    });
-                  }}
-                  style={{ flex: 1 }}
-                >
-                  {integrations.map((it) => (
-                    <option key={it.id} value={it.id}>
-                      {it.name} ({it.type})
-                    </option>
-                  ))}
-                </select>
-                <button
-                  className="btn btn-sm btn-danger"
-                  onClick={() => removeSource(i)}
-                >
-                  Quitar
-                </button>
-              </div>
-
-              {type === "sentry" ? (
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-                  <Field
-                    label="Project slug"
-                    value={(src.filter.projectSlug as string) ?? ""}
-                    onChange={(v) => updateFilter(i, "projectSlug", v)}
-                    placeholder="frontend"
-                  />
-                  <Field
-                    label="Query"
-                    value={(src.filter.query as string) ?? ""}
-                    onChange={(v) => updateFilter(i, "query", v)}
-                    placeholder="is:unresolved"
-                  />
-                </div>
-              ) : (
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-                  <Field
-                    label="List ID"
-                    value={(src.filter.listId as string) ?? ""}
-                    onChange={(v) => updateFilter(i, "listId", v)}
-                    placeholder="901234567"
-                  />
-                  <Field
-                    label="Estados (coma, opcional)"
-                    value={
-                      Array.isArray(src.filter.statuses)
-                        ? (src.filter.statuses as string[]).join(", ")
-                        : ""
-                    }
-                    onChange={(v) =>
-                      updateFilter(
-                        i,
-                        "statuses",
-                        v
-                          .split(",")
-                          .map((s) => s.trim())
-                          .filter(Boolean),
-                      )
-                    }
-                    placeholder="to do, listo para dev"
-                  />
-                </div>
-              )}
-            </div>
-          );
-        })}
-      </div>
+      <SourceEditor
+        sources={draft.sources}
+        integrations={integrations}
+        onChange={(s) => set("sources", s)}
+      />
     </div>
   );
 }

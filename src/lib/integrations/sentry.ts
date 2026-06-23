@@ -4,6 +4,7 @@ import {
   truncate,
   type IntegrationProvider,
   type ProviderTestResult,
+  type SourceMeta,
 } from "./provider";
 
 function baseUrl(config: SentryConfig): string {
@@ -141,5 +142,21 @@ export const sentryProvider: IntegrationProvider = {
         200,
       )}`,
     };
+  },
+
+  async fetchSourceMeta(raw): Promise<SourceMeta> {
+    const config = raw as unknown as SentryConfig;
+    const { status, body } = await fetchJson(
+      `${baseUrl(config)}/api/0/organizations/${config.org}/projects/`,
+      { headers: headers(config) },
+    );
+    const projects =
+      status === 200 && Array.isArray(body)
+        ? (body as { slug: string; name: string }[]).map((p) => ({
+            slug: p.slug,
+            name: p.name,
+          }))
+        : [];
+    return { type: "sentry", projects };
   },
 };
