@@ -7,6 +7,7 @@ import { useEffect, useState } from "react";
 const LINKS = [
   { href: "/", label: "Dashboard", icon: "◧" },
   { href: "/projects", label: "Proyectos", icon: "▤" },
+  { href: "/plans", label: "Planeación", icon: "❑" },
   { href: "/integrations", label: "Integraciones", icon: "⚇" },
   { href: "/runs", label: "Ejecuciones", icon: "▶" },
   { href: "/settings", label: "Ajustes", icon: "⚙" },
@@ -24,26 +25,36 @@ interface AuthLite {
   subscriptionType: string | null;
 }
 
+interface ExecLite {
+  method: "subscription" | "api-key";
+  apiKeySet: boolean;
+}
+
 export function Sidebar() {
   const pathname = usePathname();
   const [status, setStatus] = useState<SchedStatus | null>(null);
   const [auth, setAuth] = useState<AuthLite | null>(null);
+  const [exec, setExec] = useState<ExecLite | null>(null);
 
   useEffect(() => {
     let alive = true;
     const load = async () => {
       try {
-        const [s, a] = await Promise.all([
+        const [s, a, e] = await Promise.all([
           fetch("/api/scheduler", { cache: "no-store" }).then((r) =>
             r.ok ? r.json() : null,
           ),
           fetch("/api/auth", { cache: "no-store" }).then((r) =>
             r.ok ? r.json() : null,
           ),
+          fetch("/api/exec", { cache: "no-store" }).then((r) =>
+            r.ok ? r.json() : null,
+          ),
         ]);
         if (alive) {
           if (s) setStatus(s);
           if (a) setAuth(a);
+          if (e) setExec(e);
         }
       } catch {
         /* ignore */
@@ -124,34 +135,48 @@ export function Sidebar() {
           marginBottom: 8,
         }}
       >
-        <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
-          <span
-            style={{
-              width: 8,
-              height: 8,
-              borderRadius: 999,
-              background: auth?.authenticated ? "var(--ok)" : "var(--danger)",
-              boxShadow: auth?.authenticated ? "0 0 8px var(--ok)" : "none",
-            }}
-          />
-          <span style={{ fontSize: 12, fontWeight: 600 }}>
-            {auth?.authenticated ? "Suscripción activa" : "No autenticado"}
-          </span>
-        </div>
-        <div
-          className="muted"
-          style={{
-            fontSize: 11,
-            marginTop: 5,
-            overflow: "hidden",
-            textOverflow: "ellipsis",
-            whiteSpace: "nowrap",
-          }}
-        >
-          {auth?.authenticated
-            ? `${auth.email ?? ""}${auth.subscriptionType ? ` · ${auth.subscriptionType}` : ""}`
-            : "Configura tu suscripción Claude →"}
-        </div>
+        {(() => {
+          const usingKey = exec?.method === "api-key" && exec.apiKeySet;
+          const ok = usingKey || !!auth?.authenticated;
+          return (
+            <>
+              <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
+                <span
+                  style={{
+                    width: 8,
+                    height: 8,
+                    borderRadius: 999,
+                    background: ok ? "var(--ok)" : "var(--danger)",
+                    boxShadow: ok ? "0 0 8px var(--ok)" : "none",
+                  }}
+                />
+                <span style={{ fontSize: 12, fontWeight: 600 }}>
+                  {usingKey
+                    ? "API key activa"
+                    : ok
+                      ? "Suscripción activa"
+                      : "No autenticado"}
+                </span>
+              </div>
+              <div
+                className="muted"
+                style={{
+                  fontSize: 11,
+                  marginTop: 5,
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {usingKey
+                  ? "Anthropic API key"
+                  : ok
+                    ? `${auth?.email ?? ""}${auth?.subscriptionType ? ` · ${auth.subscriptionType}` : ""}`
+                    : "Configura tu modelo/auth →"}
+              </div>
+            </>
+          );
+        })()}
       </Link>
 
       <div

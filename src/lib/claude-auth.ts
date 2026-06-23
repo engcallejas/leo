@@ -2,6 +2,7 @@ import { spawn } from "child_process";
 import fs from "fs";
 import { query, run } from "./db";
 import { getSettings } from "./settings";
+import type { AuthMethod, ExecConfig, Project } from "./types";
 
 export interface AuthStatus {
   loggedIn: boolean;
@@ -66,25 +67,168 @@ export async function clearStoredToken(): Promise<void> {
   g.__leoAuthCache = undefined;
 }
 
+// ---------- exec config (global model/auth defaults) ----------
+const METHOD_KEY = "anthropic_auth_method";
+const APIKEY_KEY = "anthropic_api_key";
+const MODEL_KEY = "default_model";
+
+async function getSetting(key: string): Promise<string | null> {
+  const rows = await query<{ value: string }>(
+    "SELECT value FROM settings WHERE key = ?",
+    [key],
+  );
+  return rows[0]?.value ?? null;
+}
+async function putSetting(key: string, value: string): Promise<void> {
+  await run(
+    "INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+    [key, value],
+  );
+}
+
+export async function getAnthropicApiKey(): Promise<string | null> {
+  const v = (await getSetting(APIKEY_KEY))?.trim();
+  return v || process.env.ANTHROPIC_API_KEY || null;
+}
+
+export async function getExecConfig(): Promise<ExecConfig> {
+  const method = (await getSetting(METHOD_KEY)) as AuthMethod | null;
+  const key = await getAnthropicApiKey();
+  return {
+    method: method === "api-key" ? "api-key" : "subscription",
+    apiKeySet: !!key,
+    defaultModel: (await getSetting(MODEL_KEY)) ?? "",
+  };
+}
+
+export async function setExecConfig(patch: {
+  method?: AuthMethod;
+  defaultModel?: string;
+  apiKey?: string | null;
+}): Promise<ExecConfig> {
+  if (patch.method) await putSetting(METHOD_KEY, patch.method);
+  if (patch.defaultModel !== undefined)
+    await putSetting(MODEL_KEY, patch.defaultModel.trim());
+  if (patch.apiKey !== undefined) {
+    if (patch.apiKey) await putSetting(APIKEY_KEY, patch.apiKey.trim());
+    else await run("DELETE FROM settings WHERE key = ?", [APIKEY_KEY]);
+  }
+  g.__leoAuthCache = undefined;
+  return getExecConfig();
+}
+
+/** Effective auth method + model + key for a given project. */
+export async function resolveProjectExec(project: Project): Promise<{
+  method: AuthMethod;
+  apiKey: string | null;
+  model: string | null;
+}> {
+  const cfg = await getExecConfig();
+  const method: AuthMethod =
+    project.auth_method === "inherit" ? cfg.method : project.auth_method;
+  return {
+    method,
+    apiKey: method === "api-key" ? await getAnthropicApiKey() : null,
+    model: (project.model && project.model.trim()) || cfg.defaultModel || null,
+  };
+}
+
+/** Gate: can this project actually run with its effective auth? */
+export async function assertRunnable(
+  project: Project,
+): Promise<{ ok: boolean; reason?: string }> {
+  const exec = await resolveProjectExec(project);
+  if (exec.method === "api-key") {
+    return exec.apiKey
+      ? { ok: true }
+      : {
+          ok: false,
+          reason:
+            "Método API key seleccionado pero no hay ANTHROPIC_API_KEY configurada (Ajustes → Modelo y proveedor).",
+        };
+  }
+  const auth = await getAuthStatus();
+  return auth.authenticated
+    ? { ok: true }
+    : {
+        ok: false,
+        reason: auth.loggedIn
+          ? "Claude está autenticado por API key/consola, no por suscripción."
+          : `No autenticado con suscripción Claude. ${auth.error ?? "Ve a Ajustes → Autenticación."}`,
+      };
+}
+
 /**
- * Environment for spawning `claude`. Forces the *subscription* auth path:
- * ANTHROPIC_API_KEY / ANTHROPIC_AUTH_TOKEN are stripped so the CLI can only use
- * OAuth (keychain / credentials file / CLAUDE_CODE_OAUTH_TOKEN). A token stored
- * in Leo (or already present in the process env) is injected.
+ * Environment for spawning `claude`. For subscription: strips ANTHROPIC_API_KEY
+ * and injects the OAuth token. For api-key: sets ANTHROPIC_API_KEY.
  */
-export async function buildClaudeEnv(
-  extra: Record<string, string> = {},
-): Promise<NodeJS.ProcessEnv> {
+export async function buildClaudeEnv(opts?: {
+  method?: AuthMethod;
+  apiKey?: string | null;
+  extra?: Record<string, string>;
+}): Promise<NodeJS.ProcessEnv> {
   const env: NodeJS.ProcessEnv = { ...process.env };
-  delete env.ANTHROPIC_API_KEY;
   delete env.ANTHROPIC_AUTH_TOKEN;
   env.FORCE_COLOR = "0";
 
-  const stored = await getStoredToken();
-  const token = stored || process.env.CLAUDE_CODE_OAUTH_TOKEN;
-  if (token) env.CLAUDE_CODE_OAUTH_TOKEN = token;
+  if (opts?.method === "api-key") {
+    const key = opts.apiKey ?? (await getAnthropicApiKey());
+    if (key) env.ANTHROPIC_API_KEY = key;
+    delete env.CLAUDE_CODE_OAUTH_TOKEN;
+  } else {
+    // subscription
+    delete env.ANTHROPIC_API_KEY;
+    const token = (await getStoredToken()) || process.env.CLAUDE_CODE_OAUTH_TOKEN;
+    if (token) env.CLAUDE_CODE_OAUTH_TOKEN = token;
+  }
 
-  return { ...env, ...extra };
+  return { ...env, ...(opts?.extra ?? {}) };
+}
+
+const CURATED_MODELS = [
+  "claude-opus-4-8",
+  "claude-sonnet-4-6",
+  "claude-haiku-4-5",
+  "claude-fable-5",
+];
+
+/** Models for the dropdown: live from Anthropic if an API key is set, else curated. */
+export async function listModels(): Promise<string[]> {
+  const ids = new Set(CURATED_MODELS);
+  const key = await getAnthropicApiKey();
+  if (key) {
+    try {
+      const res = await fetch("https://api.anthropic.com/v1/models?limit=100", {
+        headers: { "x-api-key": key, "anthropic-version": "2023-06-01" },
+      });
+      if (res.ok) {
+        const body = (await res.json()) as { data?: { id?: string }[] };
+        for (const m of body.data ?? []) if (m.id) ids.add(m.id);
+      }
+    } catch {
+      /* fall back to curated */
+    }
+  }
+  return [...ids];
+}
+
+/** Validate an Anthropic API key against the models endpoint. */
+export async function testApiKey(
+  key?: string,
+): Promise<{ ok: boolean; message: string }> {
+  const k = key?.trim() || (await getAnthropicApiKey());
+  if (!k) return { ok: false, message: "No hay API key configurada." };
+  try {
+    const res = await fetch("https://api.anthropic.com/v1/models?limit=1", {
+      headers: { "x-api-key": k, "anthropic-version": "2023-06-01" },
+    });
+    if (res.ok) return { ok: true, message: "API key válida ✓" };
+    if (res.status === 401)
+      return { ok: false, message: "API key inválida (401)." };
+    return { ok: false, message: `Anthropic respondió ${res.status}.` };
+  } catch (e) {
+    return { ok: false, message: (e as Error).message };
+  }
 }
 
 interface ExecResult {

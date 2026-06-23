@@ -4,6 +4,7 @@ import type {
   IntegrationType,
   PermissionMode,
   Project,
+  ProjectAuthMethod,
   ProjectSource,
   Run,
   RunStatus,
@@ -135,6 +136,7 @@ function mapProject(r: ProjectRow): Project {
     sources: parseJSON<ProjectSource[]>(r.sources, []),
     enabled: toBool(r.enabled),
     resolve_source_on_done: toBool(r.resolve_source_on_done),
+    auth_method: (r.auth_method as ProjectAuthMethod) ?? "inherit",
     created_at: String(r.created_at),
     updated_at: String(r.updated_at),
   };
@@ -169,6 +171,7 @@ export interface ProjectInput {
   sources?: ProjectSource[];
   enabled?: boolean;
   resolve_source_on_done?: boolean;
+  auth_method?: ProjectAuthMethod;
 }
 
 export async function createProject(input: ProjectInput): Promise<Project> {
@@ -176,8 +179,8 @@ export async function createProject(input: ProjectInput): Promise<Project> {
     `INSERT INTO projects
        (name, repo_path, base_branch, target_branch, prompt_rules, auto_mode,
         permission_mode, allowed_tools, disallowed_tools, model, max_turns, sources, enabled,
-        resolve_source_on_done)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        resolve_source_on_done, auth_method)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       input.name,
       input.repo_path,
@@ -193,6 +196,7 @@ export async function createProject(input: ProjectInput): Promise<Project> {
       JSON.stringify(input.sources ?? []),
       input.enabled === false ? 0 : 1,
       input.resolve_source_on_done === false ? 0 : 1,
+      input.auth_method ?? "inherit",
     ],
   );
   return (await getProject(res.lastInsertRowid))!;
@@ -210,7 +214,7 @@ export async function updateProject(
        name = ?, repo_path = ?, base_branch = ?, target_branch = ?, prompt_rules = ?,
        auto_mode = ?, permission_mode = ?, allowed_tools = ?, disallowed_tools = ?,
        model = ?, max_turns = ?, sources = ?, enabled = ?, resolve_source_on_done = ?,
-       updated_at = datetime('now')
+       auth_method = ?, updated_at = datetime('now')
      WHERE id = ?`,
     [
       merged.name,
@@ -227,6 +231,7 @@ export async function updateProject(
       JSON.stringify(merged.sources ?? []),
       merged.enabled ? 1 : 0,
       merged.resolve_source_on_done ? 1 : 0,
+      merged.auth_method ?? "inherit",
       id,
     ],
   );

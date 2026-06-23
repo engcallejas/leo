@@ -28,6 +28,7 @@ export const projectInputSchema = z.object({
   sources: z.array(projectSourceSchema).optional(),
   enabled: z.boolean().optional(),
   resolve_source_on_done: z.boolean().optional(),
+  auth_method: z.enum(["inherit", "subscription", "api-key"]).optional(),
 });
 
 export const integrationInputSchema = z.object({
@@ -54,4 +55,33 @@ export const manualTaskSchema = z.object({
   title: z.string().min(1),
   description: z.string().optional(),
   url: z.string().nullable().optional(),
+});
+
+// ---------- planning ----------
+export const planCreateSchema = z.object({
+  // Either seed from an existing pulled task...
+  from_task_id: z.number().int().optional(),
+  // ...or provide the fields manually.
+  title: z.string().optional(),
+  objective: z.string().optional(),
+  source_type: z.enum(["manual", "sentry", "clickup"]).optional(),
+  source_integration_id: z.number().int().nullable().optional(),
+  source_external_id: z.string().nullable().optional(),
+  source_url: z.string().nullable().optional(),
+});
+
+export const planStepInputSchema = z.object({
+  title: z.string().min(1),
+  spec: z.string().optional(),
+});
+
+export const planUpdateSchema = z.object({
+  title: z.string().min(1).optional(),
+  objective: z.string().optional(),
+  refined_spec: z.string().optional(),
+  steps: z.array(planStepInputSchema).optional(),
+});
+
+export const planEnqueueSchema = z.object({
+  scheduled_for: z.string().nullable().optional(),
 });

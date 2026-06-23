@@ -231,4 +231,52 @@ export const clickupProvider: IntegrationProvider = {
 
     return parts.join("\n\n");
   },
+
+  async createTask(raw, listId, input): Promise<{ id: string; url: string | null }> {
+    const config = raw as unknown as ClickUpConfig;
+    const body: Record<string, unknown> = { name: input.name };
+    if (input.description) body.description = input.description;
+    if (input.parentId) body.parent = input.parentId;
+    const { status, body: res } = await fetchJson(`${API}/list/${listId}/task`, {
+      method: "POST",
+      headers: headers(config),
+      body: JSON.stringify(body),
+    });
+    if (status === 200) {
+      const t = res as { id?: string; url?: string };
+      if (t.id) return { id: t.id, url: t.url ?? null };
+    }
+    throw new Error(
+      `ClickUp create task ${status}: ${truncate(JSON.stringify(res), 200)}`,
+    );
+  },
+
+  async addComment(raw, externalId, text): Promise<ProviderTestResult> {
+    const config = raw as unknown as ClickUpConfig;
+    const { status, body } = await fetchJson(
+      `${API}/task/${externalId}/comment`,
+      {
+        method: "POST",
+        headers: headers(config),
+        body: JSON.stringify({ comment_text: text, notify_all: false }),
+      },
+    );
+    if (status === 200) return { ok: true, message: "Comentario publicado." };
+    return {
+      ok: false,
+      message: `ClickUp comment ${status}: ${truncate(JSON.stringify(body), 150)}`,
+    };
+  },
+
+  async getTaskMeta(raw, externalId): Promise<{ listId: string | null; url: string | null }> {
+    const config = raw as unknown as ClickUpConfig;
+    const { status, body } = await fetchJson(`${API}/task/${externalId}`, {
+      headers: headers(config),
+    });
+    if (status === 200) {
+      const t = body as { url?: string; list?: { id?: string } };
+      return { listId: t.list?.id ?? null, url: t.url ?? null };
+    }
+    return { listId: null, url: null };
+  },
 };

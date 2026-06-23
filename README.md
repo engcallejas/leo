@@ -17,11 +17,15 @@ Es **local-only**, sin login de la app. Todo el estado vive en `./data`
 - **Ejecuta `claude` headless** con la carpeta del repo como `cwd` → respeta
   automáticamente su `CLAUDE.md`, su `.mcp.json` y las validaciones por MCP
   (Supabase, Playwright, etc.).
-- **Suscripción, no API key:** valida que estés autenticado con tu plan de
-  Claude (Pro/Max) y fuerza ese modo (nunca factura por API key).
+- **Suscripción o API key:** por defecto usa tu **suscripción** de Claude
+  (Pro/Max); también puedes usar una **API key de Anthropic**. Global con
+  override por proyecto, y los modelos se eligen de una lista.
 - **Configurable por proyecto:** prompt de reglas (puede / debe / no puede /
   no debe), branch base y destino, modo de permisos, auto-mode, herramientas
   permitidas, y "marcar el issue como resuelto al terminar".
+- **Planeación:** parte de un issue/tarea, **refina** el requerimiento con el
+  contexto real del repo, lo descompone en **pasos**, los empuja a ClickUp como
+  subtasks y los **orquesta en orden pasando contexto acumulado** entre sesiones.
 - **Runs robustos:** cada ejecución corre desacoplada y **sobrevive a reinicios**
   de Leo. La UI muestra la transcripción en vivo, el costo y los turnos.
 
@@ -102,18 +106,39 @@ Leo solo ejecuta con tu suscripción. Antes de cada run valida
 > Para auto-mode usa el modo de permisos `acceptEdits` o `bypassPermissions`:
 > en modo headless no hay forma de responder prompts de permiso.
 
+## Planeación (refinamiento + orquestación)
+
+Para trabajo más grande que una sola corrida, usa **Planeación**:
+
+1. **Planeación → + Nueva planeación**: elige un proyecto y el origen — una
+   tarea de ClickUp / issue de Sentry ya jalado, o un seed **manual**.
+2. **Refinar**: Leo corre `claude` en **modo solo-lectura** dentro del repo
+   (bloquea Edit/Write/Bash) para entender el código real y devuelve un
+   **requerimiento refinado** + una lista **ordenada de pasos**. Puedes editar
+   todo a mano.
+3. **Crear subtasks en ClickUp** (opcional): cada paso se crea como subtask bajo
+   la tarea padre.
+4. **Encolar / Programar**: los pasos se ejecutan **uno a uno, en orden**. Cada
+   paso recibe el spec global + los **resúmenes de los pasos previos** (contexto
+   acumulativo); al terminar cada subtask se escribe un **comentario en ClickUp**
+   con el resultado. Si un paso falla, la orquestación se detiene.
+
+> El refinamiento usa tu suscripción/API key igual que un run normal — lo
+> disparas tú con el botón **Refinar**.
+
 ## Estructura
 
 ```
 src/
   lib/
     db.ts / schema.ts      SQLite (libsql) + migraciones
-    repo.ts                CRUD + mappers
-    claude-auth.ts         validación de suscripción + env saneado
+    repo.ts / plan-repo.ts CRUD + mappers (tareas/runs y planes/pasos)
+    claude-auth.ts         auth (suscripción / API key) + modelos + env saneado
     boot.ts                bootstrap (migración + scheduler)
-    integrations/          providers Sentry + ClickUp (poll / resolve)
-    orchestrator/          prompt, runner (detached) y scheduler
-  app/                     UI + rutas API
+    integrations/          providers Sentry + ClickUp (poll / resolve / subtasks)
+    orchestrator/          prompt, runner, planner (refinamiento),
+                           plan-runner (orquestación) y scheduler
+  app/                     UI + rutas API (incl. /plans y /api/plans)
 Dockerfile, docker-compose.yml, .env.example
 data/                      leo.db + logs/   (gitignored)
 ```

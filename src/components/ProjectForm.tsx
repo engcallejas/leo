@@ -2,12 +2,14 @@
 
 import { useState } from "react";
 import { FolderPicker } from "@/components/FolderPicker";
+import { ModelInput } from "@/components/ModelInput";
 import { SourceEditor } from "@/components/SourceEditor";
 import { Field } from "@/components/ui";
 import type {
   Integration,
   PermissionMode,
   Project,
+  ProjectAuthMethod,
   ProjectSource,
 } from "@/lib/types";
 
@@ -27,6 +29,7 @@ export type Draft = {
   sources: ProjectSource[];
   enabled: boolean;
   resolve_source_on_done: boolean;
+  auth_method: ProjectAuthMethod;
 };
 
 export function emptyDraft(): Draft {
@@ -46,6 +49,7 @@ export function emptyDraft(): Draft {
     sources: [],
     enabled: true,
     resolve_source_on_done: true,
+    auth_method: "inherit",
   };
 }
 
@@ -66,6 +70,7 @@ export function projectToDraft(p: Project): Draft {
     sources: p.sources,
     enabled: p.enabled,
     resolve_source_on_done: p.resolve_source_on_done,
+    auth_method: p.auth_method,
   };
 }
 
@@ -85,6 +90,7 @@ export function draftToBody(draft: Draft) {
     sources: draft.sources,
     enabled: draft.enabled,
     resolve_source_on_done: draft.resolve_source_on_done,
+    auth_method: draft.auth_method,
   };
 }
 
@@ -201,12 +207,32 @@ export function ProjectForm({
             pueden responder permisos).
           </div>
         </div>
-        <Field
-          label="Modelo (opcional)"
-          value={draft.model}
-          onChange={(v) => set("model", v)}
-          placeholder="claude-opus-4-8"
-        />
+        <div>
+          <label className="label">Modelo (opcional)</label>
+          <ModelInput
+            value={draft.model}
+            onChange={(v) => set("model", v)}
+            placeholder="(usar el global)"
+          />
+        </div>
+      </div>
+
+      <div>
+        <label className="label">Autenticación del modelo</label>
+        <select
+          className="select"
+          value={draft.auth_method}
+          onChange={(e) =>
+            set("auth_method", e.target.value as ProjectAuthMethod)
+          }
+        >
+          <option value="inherit">Heredar del global (Ajustes)</option>
+          <option value="subscription">Suscripción de Claude</option>
+          <option value="api-key">API key de Anthropic</option>
+        </select>
+        <div className="hint">
+          Override del método global solo para este proyecto.
+        </div>
       </div>
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>

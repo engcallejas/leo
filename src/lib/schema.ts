@@ -34,6 +34,7 @@ CREATE TABLE IF NOT EXISTS projects (
   sources          TEXT NOT NULL DEFAULT '[]',
   enabled          INTEGER NOT NULL DEFAULT 1,
   resolve_source_on_done INTEGER NOT NULL DEFAULT 1,
+  auth_method      TEXT NOT NULL DEFAULT 'inherit',
   created_at       TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at       TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -78,4 +79,43 @@ CREATE TABLE IF NOT EXISTS runs (
 
 CREATE INDEX IF NOT EXISTS idx_runs_task ON runs(task_id);
 CREATE INDEX IF NOT EXISTS idx_runs_status ON runs(status);
+
+CREATE TABLE IF NOT EXISTS plans (
+  id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+  project_id            INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  title                 TEXT NOT NULL,
+  objective             TEXT NOT NULL DEFAULT '',
+  source_type           TEXT NOT NULL DEFAULT 'manual',
+  source_integration_id INTEGER REFERENCES integrations(id) ON DELETE SET NULL,
+  source_external_id    TEXT,
+  source_url            TEXT,
+  refined_spec          TEXT NOT NULL DEFAULT '',
+  status                TEXT NOT NULL DEFAULT 'draft',
+  scheduled_for         TEXT,
+  clickup_parent_id     TEXT,
+  refine_pid            INTEGER,
+  refine_log            TEXT,
+  error                 TEXT,
+  created_at            TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at            TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_plans_project ON plans(project_id);
+CREATE INDEX IF NOT EXISTS idx_plans_status ON plans(status);
+
+CREATE TABLE IF NOT EXISTS plan_steps (
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  plan_id         INTEGER NOT NULL REFERENCES plans(id) ON DELETE CASCADE,
+  position        INTEGER NOT NULL DEFAULT 0,
+  title           TEXT NOT NULL,
+  spec            TEXT NOT NULL DEFAULT '',
+  status          TEXT NOT NULL DEFAULT 'pending',
+  task_id         INTEGER REFERENCES tasks(id) ON DELETE SET NULL,
+  clickup_task_id TEXT,
+  result_summary  TEXT,
+  created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at      TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_plan_steps_plan ON plan_steps(plan_id);
 `;

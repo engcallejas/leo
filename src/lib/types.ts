@@ -10,6 +10,18 @@ export type PermissionMode =
   | "plan"
   | "bypassPermissions";
 
+/** How Claude Code authenticates the model calls. */
+export type AuthMethod = "subscription" | "api-key";
+/** Per-project: inherit the global method or override it. */
+export type ProjectAuthMethod = "inherit" | AuthMethod;
+
+/** Global execution/model config (non-sensitive view). */
+export interface ExecConfig {
+  method: AuthMethod;
+  apiKeySet: boolean;
+  defaultModel: string;
+}
+
 export type TaskStatus =
   | "pending" // pulled, waiting (manual project) or about to be queued (auto)
   | "queued" // accepted for execution, waiting for a free run slot
@@ -94,6 +106,8 @@ export interface Project {
   enabled: boolean;
   /** On a successful run, mark the source item (e.g. Sentry issue) resolved. */
   resolve_source_on_done: boolean;
+  /** Auth method for this project: inherit global, or force subscription/api-key. */
+  auth_method: ProjectAuthMethod;
   created_at: string;
   updated_at: string;
 }
@@ -140,6 +154,81 @@ export interface PulledItem {
   description: string;
   url: string | null;
   raw: unknown;
+}
+
+// ---------- planning / refinement ----------
+
+export type PlanStatus =
+  | "draft" // created, no refinement yet
+  | "refining" // a refinement run is in flight
+  | "refined" // has a refined spec + steps, ready to push/enqueue
+  | "queued" // orchestration requested, waiting for the first step
+  | "running" // a step is executing
+  | "done" // all steps finished successfully
+  | "failed" // a step failed (orchestration stopped)
+  | "cancelled";
+
+export type PlanStepStatus =
+  | "pending" // not dispatched yet
+  | "queued" // a Leo task was created and is waiting for a run slot
+  | "running" // its run is in flight
+  | "done"
+  | "failed"
+  | "skipped";
+
+/** A refinement effort for a project: turns one seed into an ordered plan. */
+export interface Plan {
+  id: number;
+  project_id: number;
+  title: string;
+  /** The user's goal / seed summary in their own words. */
+  objective: string;
+  source_type: SourceType;
+  source_integration_id: number | null;
+  /** Originating ClickUp task id / Sentry issue id, if any. */
+  source_external_id: string | null;
+  source_url: string | null;
+  /** Overall refined requirement (markdown), produced by the refinement run. */
+  refined_spec: string;
+  status: PlanStatus;
+  /** ISO datetime; if set and in the future, orchestration waits until then. */
+  scheduled_for: string | null;
+  /** ClickUp parent task the steps were pushed under, if any. */
+  clickup_parent_id: string | null;
+  refine_pid: number | null;
+  refine_log: string | null;
+  error: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface PlanStep {
+  id: number;
+  plan_id: number;
+  position: number;
+  title: string;
+  /** Per-step instructions (the refined requirement for this slice of work). */
+  spec: string;
+  status: PlanStepStatus;
+  /** The Leo task created to execute this step, once dispatched. */
+  task_id: number | null;
+  /** The ClickUp subtask created for this step, once pushed. */
+  clickup_task_id: string | null;
+  /** Captured run summary — fed forward as cumulative context to later steps. */
+  result_summary: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface PlanWithSteps extends Plan {
+  steps: PlanStep[];
+}
+
+/** Structured output a refinement run is expected to produce. */
+export interface RefineResult {
+  title?: string;
+  refined_spec: string;
+  steps: { title: string; spec: string }[];
 }
 
 export interface AppSettings {

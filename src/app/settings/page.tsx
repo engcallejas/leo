@@ -3,9 +3,10 @@
 import { useEffect, useState } from "react";
 import { api } from "@/components/client";
 import { Header } from "@/components/Header";
+import { ModelInput } from "@/components/ModelInput";
 import { ErrorBar } from "@/components/ui";
 import type { AuthStatus } from "@/lib/claude-auth";
-import type { AppSettings } from "@/lib/types";
+import type { AppSettings, AuthMethod, ExecConfig } from "@/lib/types";
 
 export default function SettingsPage() {
   const [s, setS] = useState<AppSettings | null>(null);
@@ -41,6 +42,7 @@ export default function SettingsPage() {
       {err && <ErrorBar text={err} />}
 
       <AuthCard />
+      <ExecCard />
 
       <div className="card" style={{ padding: 20, display: "grid", gap: 16 }}>
         <Num
@@ -307,6 +309,159 @@ function AuthCard() {
       )}
 
       {err && <div style={{ marginTop: 10 }}><ErrorBar text={err} /></div>}
+    </div>
+  );
+}
+
+function ExecCard() {
+  const [cfg, setCfg] = useState<ExecConfig | null>(null);
+  const [key, setKey] = useState("");
+  const [test, setTest] = useState<{ ok: boolean; message: string } | null>(
+    null,
+  );
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const [saved, setSaved] = useState(false);
+
+  useEffect(() => {
+    api
+      .get("/api/exec")
+      .then(setCfg)
+      .catch((e) => setErr(e.message));
+  }, []);
+
+  if (!cfg) return null;
+
+  const save = async () => {
+    setBusy(true);
+    setErr(null);
+    setSaved(false);
+    try {
+      const body: {
+        method: AuthMethod;
+        defaultModel: string;
+        apiKey?: string;
+      } = { method: cfg.method, defaultModel: cfg.defaultModel };
+      if (key) body.apiKey = key;
+      const next = await api.put("/api/exec", body);
+      setCfg(next);
+      setKey("");
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2000);
+    } catch (e) {
+      setErr((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  const clearKey = async () => {
+    setBusy(true);
+    try {
+      setCfg(await api.put("/api/exec", { apiKey: null }));
+      setTest(null);
+    } finally {
+      setBusy(false);
+    }
+  };
+  const probar = async () => {
+    setBusy(true);
+    setTest(null);
+    try {
+      setTest(await api.post("/api/exec/test", key ? { apiKey: key } : {}));
+    } catch (e) {
+      setTest({ ok: false, message: (e as Error).message });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div
+      className="card"
+      style={{ padding: 20, marginBottom: 16, display: "grid", gap: 14 }}
+    >
+      <div style={{ fontWeight: 700, fontSize: 15 }}>Modelo y proveedor</div>
+      <div>
+        <label className="label">Método de autenticación (global)</label>
+        <select
+          className="select"
+          value={cfg.method}
+          onChange={(e) =>
+            setCfg({ ...cfg, method: e.target.value as AuthMethod })
+          }
+        >
+          <option value="subscription">Suscripción de Claude</option>
+          <option value="api-key">API key de Anthropic</option>
+        </select>
+        <div className="hint">
+          Cada proyecto puede heredar esto o forzar su propio método.
+        </div>
+      </div>
+
+      {cfg.method === "api-key" && (
+        <div>
+          <label className="label">
+            ANTHROPIC_API_KEY{" "}
+            {cfg.apiKeySet && (
+              <span className="badge badge-ok badge-dot">configurada</span>
+            )}
+          </label>
+          <div style={{ display: "flex", gap: 8 }}>
+            <input
+              className="input"
+              type="password"
+              placeholder={
+                cfg.apiKeySet ? "•••• (vacío = conservar)" : "sk-ant-..."
+              }
+              value={key}
+              onChange={(e) => setKey(e.target.value)}
+            />
+            <button className="btn" onClick={probar} disabled={busy}>
+              Probar
+            </button>
+            {cfg.apiKeySet && (
+              <button
+                className="btn btn-danger"
+                onClick={clearKey}
+                disabled={busy}
+              >
+                Quitar
+              </button>
+            )}
+          </div>
+          {test && (
+            <div
+              className={`card ${test.ok ? "badge-ok" : "badge-danger"}`}
+              style={{ padding: "8px 12px", fontSize: 13, marginTop: 8 }}
+            >
+              {test.message}
+            </div>
+          )}
+          <div className="hint">
+            Usa facturación por API (no suscripción). Se guarda en data/leo.db.
+          </div>
+        </div>
+      )}
+
+      <div>
+        <label className="label">Modelo por defecto</label>
+        <ModelInput
+          value={cfg.defaultModel}
+          onChange={(v) => setCfg({ ...cfg, defaultModel: v })}
+          placeholder="(vacío = el que elija Claude Code)"
+        />
+        <div className="hint">
+          Se usa cuando un proyecto no especifica su propio modelo.
+        </div>
+      </div>
+
+      {err && <ErrorBar text={err} />}
+      <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+        <button className="btn btn-primary" onClick={save} disabled={busy}>
+          Guardar
+        </button>
+        {saved && <span className="badge badge-ok badge-dot">guardado</span>}
+      </div>
     </div>
   );
 }

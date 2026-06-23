@@ -42,6 +42,48 @@ export function runStatusLabel(s: string): string {
   return RUN_LABELS[s as RunStatus] ?? s;
 }
 
+const PLAN_LABELS: Record<string, string> = {
+  draft: "Borrador",
+  refining: "Refinando",
+  refined: "Refinado",
+  queued: "En cola",
+  running: "Ejecutando",
+  done: "Completado",
+  failed: "Falló",
+  cancelled: "Cancelado",
+};
+const PLAN_STEP_LABELS: Record<string, string> = {
+  pending: "Pendiente",
+  queued: "En cola",
+  running: "Corriendo",
+  done: "Hecho",
+  failed: "Falló",
+  skipped: "Omitido",
+};
+export function planStatusLabel(s: string): string {
+  return PLAN_LABELS[s] ?? s;
+}
+export function planStepStatusLabel(s: string): string {
+  return PLAN_STEP_LABELS[s] ?? s;
+}
+export function planStatusBadgeClass(s: string): string {
+  switch (s) {
+    case "done":
+      return "badge badge-ok badge-dot";
+    case "failed":
+    case "cancelled":
+      return "badge badge-danger badge-dot";
+    case "running":
+    case "refining":
+      return "badge badge-running badge-dot";
+    case "queued":
+    case "refined":
+      return "badge badge-warn badge-dot";
+    default:
+      return "badge badge-dot";
+  }
+}
+
 export function timeAgo(iso: string | null): string {
   if (!iso) return "—";
   const d = new Date(iso.includes("T") ? iso : iso.replace(" ", "T") + "Z");

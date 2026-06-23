@@ -1,4 +1,4 @@
-import { getAuthStatus } from "../claude-auth";
+import { assertRunnable } from "../claude-auth";
 import { getProvider } from "../integrations";
 import {
   claimTaskForRun,
@@ -14,7 +14,9 @@ import {
   upsertTask,
 } from "../repo";
 import { getSettings } from "../settings";
-import type { Run } from "../types";
+import type { Project, Run } from "../types";
+import { planTick } from "./plan-runner";
+import { reconcileRefinements } from "./planner";
 import { activeRunCount, reconcileRunningRuns, startRun } from "./runner";
 
 const globalForSched = globalThis as unknown as {
@@ -99,15 +101,6 @@ async function enqueueDue(): Promise<number> {
   const max = settings.max_concurrent_runs;
   if (activeRunCount() >= max) return 0;
 
-  // Don't launch anything unless authenticated with a Claude subscription.
-  const auth = await getAuthStatus();
-  if (!auth.authenticated) {
-    state.lastError = auth.loggedIn
-      ? "Autenticado por API key, no por suscripción — runs en pausa."
-      : "No autenticado con suscripción Claude — runs en pausa.";
-    return 0;
-  }
-
   const projects = await listProjects();
   const projById = new Map(projects.map((p) => [p.id, p]));
 
@@ -121,12 +114,17 @@ async function enqueueDue(): Promise<number> {
     !iso || new Date(iso).getTime() <= now;
 
   let started = 0;
-  const tryStart = async (taskId: number, projectId: number) => {
+  const tryStart = async (taskId: number, proj: Project) => {
     if (activeRunCount() >= max) return;
-    if (busyProjects.has(projectId)) return; // sequential per project
+    if (busyProjects.has(proj.id)) return; // sequential per project
+    const gate = await assertRunnable(proj);
+    if (!gate.ok) {
+      state.lastError = gate.reason ?? "Proyecto no ejecutable";
+      return;
+    }
     if (await claimTaskForRun(taskId)) {
-      busyProjects.add(projectId);
-      await safeStart(taskId, projectId);
+      busyProjects.add(proj.id);
+      await safeStart(taskId, proj.id);
       started++;
     }
   };
@@ -137,7 +135,7 @@ async function enqueueDue(): Promise<number> {
     if (activeRunCount() >= max) break;
     const proj = projById.get(t.project_id);
     if (!proj || !proj.enabled || !due(t.scheduled_for)) continue;
-    await tryStart(t.id, proj.id);
+    await tryStart(t.id, proj);
   }
 
   // 2) Auto-mode pending tasks — only when the global switch is on.
@@ -148,7 +146,7 @@ async function enqueueDue(): Promise<number> {
       const proj = projById.get(t.project_id);
       if (!proj || !proj.enabled || !proj.auto_mode || !due(t.scheduled_for))
         continue;
-      await tryStart(t.id, proj.id);
+      await tryStart(t.id, proj);
     }
   }
   return started;
@@ -171,6 +169,11 @@ async function tick(): Promise<{ sourcesPolled: number; started: number }> {
     state.lastError = `pollAll: ${(e as Error).message}`;
     return { sourcesPolled: 0 };
   });
+  // Advance plan orchestration before enqueueDue so freshly-dispatched step
+  // tasks (status 'queued') get started in the same tick.
+  await planTick().catch((e) => {
+    state.lastError = `planTick: ${(e as Error).message}`;
+  });
   const started = await enqueueDue().catch((e) => {
     state.lastError = `enqueue: ${(e as Error).message}`;
     return 0;
@@ -186,6 +189,7 @@ export async function pollNow(): Promise<{
   pending: number;
 }> {
   const poll = await pollAll();
+  await planTick().catch(() => {});
   const started = await enqueueDue();
   state.lastTickAt = new Date().toISOString();
   const pendingTasks = await listTasks({ status: "pending", limit: 1000 });
@@ -212,15 +216,9 @@ export async function startTaskRun(taskId: number): Promise<{
   if (!project.enabled)
     return { started: false, queued: false, reason: "Proyecto deshabilitado" };
 
-  const auth = await getAuthStatus();
-  if (!auth.authenticated) {
-    return {
-      started: false,
-      queued: false,
-      reason: auth.loggedIn
-        ? "Claude está autenticado por API key, no por suscripción."
-        : "No autenticado con suscripción Claude. Ve a Ajustes → Autenticación.",
-    };
+  const gate = await assertRunnable(project);
+  if (!gate.ok) {
+    return { started: false, queued: false, reason: gate.reason };
   }
 
   const settings = await getSettings();
@@ -261,6 +259,7 @@ export async function ensureScheduler(): Promise<void> {
   if (state.started) return;
   state.started = true;
   await reconcileRunningRuns().catch(() => {});
+  await reconcileRefinements().catch(() => {});
   // First tick shortly after boot, then self-schedule.
   state.timer = setTimeout(loop, 2000);
 }

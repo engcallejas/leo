@@ -1,7 +1,11 @@
 import { spawn, type ChildProcess } from "child_process";
 import fs from "fs";
 import path from "path";
-import { buildClaudeEnv, getAuthStatus } from "../claude-auth";
+import {
+  assertRunnable,
+  buildClaudeEnv,
+  resolveProjectExec,
+} from "../claude-auth";
 import { LOGS_DIR, run as dbRun } from "../db";
 import { getProvider } from "../integrations";
 import {
@@ -65,7 +69,11 @@ function appendLine(logPath: string, obj: unknown): void {
   }
 }
 
-function buildArgs(project: Project, prompt: string): string[] {
+function buildArgs(
+  project: Project,
+  prompt: string,
+  model: string | null,
+): string[] {
   const args = ["-p", prompt, "--output-format", "stream-json", "--verbose"];
   if (project.permission_mode === "bypassPermissions") {
     args.push("--dangerously-skip-permissions");
@@ -78,8 +86,8 @@ function buildArgs(project: Project, prompt: string): string[] {
   if (project.disallowed_tools && project.disallowed_tools.trim()) {
     args.push("--disallowedTools", project.disallowed_tools.trim());
   }
-  if (project.model && project.model.trim()) {
-    args.push("--model", project.model.trim());
+  if (model && model.trim()) {
+    args.push("--model", model.trim());
   }
   if (project.max_turns && project.max_turns > 0) {
     args.push("--max-turns", String(project.max_turns));
@@ -259,14 +267,12 @@ export async function startRun(task: Task, project: Project): Promise<Run> {
     );
   }
 
-  // Gate: only run with an active Claude subscription (never API key).
-  const auth = await getAuthStatus();
-  if (!auth.authenticated) {
-    const msg = auth.loggedIn
-      ? "Claude está autenticado por API key/consola, no por suscripción. Inicia sesión con tu suscripción (claude auth login) o configura CLAUDE_CODE_OAUTH_TOKEN."
-      : `No autenticado con una suscripción de Claude. ${auth.error ?? "Ejecuta `claude setup-token` y pega el token en Ajustes."}`;
-    return failRun(runRow.id, task.id, logPath, msg);
+  // Gate: the project's effective auth (subscription or API key) must be ready.
+  const gate = await assertRunnable(project);
+  if (!gate.ok) {
+    return failRun(runRow.id, task.id, logPath, gate.reason ?? "No ejecutable");
   }
+  const exec = await resolveProjectExec(project);
 
   // Enrich the prompt with fresh source context (ClickUp description, comments,
   // attachments/images, etc.). Best-effort — never blocks the run.
@@ -287,13 +293,14 @@ export async function startRun(task: Task, project: Project): Promise<Run> {
   }
 
   const prompt = buildPrompt(project, task, extraContext);
-  const args = buildArgs(project, prompt);
+  const args = buildArgs(project, prompt, exec.model);
   appendLine(logPath, {
     type: "leo_start",
     bin: settings.claude_binary_path,
     cwd: project.repo_path,
     permission_mode: project.permission_mode,
-    model: project.model ?? null,
+    auth_method: exec.method,
+    model: exec.model,
     prompt,
   });
 
@@ -314,7 +321,7 @@ export async function startRun(task: Task, project: Project): Promise<Run> {
   try {
     child = spawn(settings.claude_binary_path, args, {
       cwd: project.repo_path,
-      env: await buildClaudeEnv(),
+      env: await buildClaudeEnv({ method: exec.method, apiKey: exec.apiKey }),
       detached: true,
       stdio: ["ignore", out, out],
     });
