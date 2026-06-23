@@ -65,6 +65,7 @@ export function migrate(): Promise<void> {
         "resolve_source_on_done",
         "INTEGER NOT NULL DEFAULT 1",
       );
+      await ensureColumn(db, "tasks", "scheduled_for", "TEXT");
       for (const [key, value] of Object.entries(DEFAULT_SETTINGS)) {
         await db.execute({
           sql: "INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO NOTHING",

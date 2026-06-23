@@ -6,7 +6,9 @@ import {
   getTask,
   listIntegrations,
   listProjects,
+  listRuns,
   listTasks,
+  queueTask,
   setIntegrationPollResult,
   setTaskStatus,
   upsertTask,
@@ -108,31 +110,45 @@ async function enqueueDue(): Promise<number> {
 
   const projects = await listProjects();
   const projById = new Map(projects.map((p) => [p.id, p]));
-  let started = 0;
 
-  // 1) Explicitly queued tasks (user pressed Run) — regardless of auto_mode.
-  const queued = await listTasks({ status: "queued", limit: 100 });
+  // Per-project sequential: never run two runs for the same project/repo at
+  // once (avoids git working-tree conflicts; makes a project's tasks run
+  // one-by-one).
+  const runningRuns = await listRuns({ status: "running", limit: 1000 });
+  const busyProjects = new Set(runningRuns.map((r) => r.project_id));
+  const now = Date.now();
+  const due = (iso: string | null) =>
+    !iso || new Date(iso).getTime() <= now;
+
+  let started = 0;
+  const tryStart = async (taskId: number, projectId: number) => {
+    if (activeRunCount() >= max) return;
+    if (busyProjects.has(projectId)) return; // sequential per project
+    if (await claimTaskForRun(taskId)) {
+      busyProjects.add(projectId);
+      await safeStart(taskId, projectId);
+      started++;
+    }
+  };
+
+  // 1) Explicitly queued tasks (user pressed Encolar/Run) — any project.
+  const queued = await listTasks({ status: "queued", limit: 200 });
   for (const t of queued) {
     if (activeRunCount() >= max) break;
     const proj = projById.get(t.project_id);
-    if (!proj || !proj.enabled) continue;
-    if (await claimTaskForRun(t.id)) {
-      await safeStart(t.id, proj.id);
-      started++;
-    }
+    if (!proj || !proj.enabled || !due(t.scheduled_for)) continue;
+    await tryStart(t.id, proj.id);
   }
 
   // 2) Auto-mode pending tasks — only when the global switch is on.
   if (settings.auto_run_enabled) {
-    const pending = await listTasks({ status: "pending", limit: 100 });
+    const pending = await listTasks({ status: "pending", limit: 200 });
     for (const t of pending) {
       if (activeRunCount() >= max) break;
       const proj = projById.get(t.project_id);
-      if (!proj || !proj.enabled || !proj.auto_mode) continue;
-      if (await claimTaskForRun(t.id)) {
-        await safeStart(t.id, proj.id);
-        started++;
-      }
+      if (!proj || !proj.enabled || !proj.auto_mode || !due(t.scheduled_for))
+        continue;
+      await tryStart(t.id, proj.id);
     }
   }
   return started;
@@ -208,8 +224,13 @@ export async function startTaskRun(taskId: number): Promise<{
   }
 
   const settings = await getSettings();
-  if (activeRunCount() >= settings.max_concurrent_runs) {
-    await setTaskStatus(taskId, "queued");
+  const projectBusy =
+    (await listRuns({ status: "running", project_id: project.id, limit: 1 }))
+      .length > 0;
+  // No free global slot, or this project is already running → queue it (runs
+  // ASAP, in order). Clear any schedule since the user asked to run it now.
+  if (activeRunCount() >= settings.max_concurrent_runs || projectBusy) {
+    await queueTask(taskId, null);
     return { started: false, queued: true };
   }
   if (await claimTaskForRun(taskId)) {

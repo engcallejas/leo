@@ -109,6 +109,8 @@ export interface Task {
   url: string | null;
   raw: unknown;
   status: TaskStatus;
+  /** ISO datetime; if set and in the future, the task waits until then. */
+  scheduled_for: string | null;
   created_at: string;
   updated_at: string;
 }

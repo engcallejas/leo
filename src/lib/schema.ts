@@ -49,6 +49,7 @@ CREATE TABLE IF NOT EXISTS tasks (
   url            TEXT,
   raw            TEXT,
   status         TEXT NOT NULL DEFAULT 'pending',
+  scheduled_for  TEXT,
   created_at     TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at     TEXT NOT NULL DEFAULT (datetime('now')),
   UNIQUE(project_id, source_type, external_id)

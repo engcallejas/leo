@@ -252,6 +252,7 @@ function mapTask(r: TaskRow): Task {
     url: (r.url as string) ?? null,
     raw: parseJSON(r.raw, null),
     status: r.status as TaskStatus,
+    scheduled_for: (r.scheduled_for as string) ?? null,
     created_at: String(r.created_at),
     updated_at: String(r.updated_at),
   };
@@ -267,14 +268,15 @@ export interface TaskInput {
   url?: string | null;
   raw?: unknown;
   status?: TaskStatus;
+  scheduled_for?: string | null;
 }
 
 /** Insert or ignore (dedup on project_id+source_type+external_id). Returns the task. */
 export async function upsertTask(input: TaskInput): Promise<Task | null> {
   await run(
     `INSERT INTO tasks
-       (project_id, integration_id, source_type, external_id, title, description, url, raw, status)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+       (project_id, integration_id, source_type, external_id, title, description, url, raw, status, scheduled_for)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(project_id, source_type, external_id) DO NOTHING`,
     [
       input.project_id,
@@ -286,6 +288,7 @@ export async function upsertTask(input: TaskInput): Promise<Task | null> {
       input.url ?? null,
       input.raw != null ? JSON.stringify(input.raw) : null,
       input.status ?? "pending",
+      input.scheduled_for ?? null,
     ],
   );
   const r = await queryOne<TaskRow>(
@@ -331,6 +334,17 @@ export async function setTaskStatus(
   await run(
     "UPDATE tasks SET status = ?, updated_at = datetime('now') WHERE id = ?",
     [status, id],
+  );
+}
+
+/** Queue a task (optionally scheduled for a future ISO datetime). */
+export async function queueTask(
+  id: number,
+  scheduledFor: string | null,
+): Promise<void> {
+  await run(
+    "UPDATE tasks SET status = 'queued', scheduled_for = ?, updated_at = datetime('now') WHERE id = ?",
+    [scheduledFor, id],
   );
 }
 

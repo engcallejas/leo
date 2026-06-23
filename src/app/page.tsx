@@ -70,16 +70,6 @@ export default function DashboardPage() {
     await api.put("/api/settings", { auto_run_enabled: next }).catch(() => {});
   };
 
-  const runTask = async (taskId: number) => {
-    try {
-      const res = await api.post(`/api/tasks/${taskId}/run`);
-      setMsg(res.started ? "Run iniciado" : res.queued ? "En cola" : res.reason);
-      await load();
-    } catch (e) {
-      setMsg((e as Error).message);
-    }
-  };
-
   const stats = [
     { label: "Proyectos", value: projects.length, href: "/projects" },
     {
@@ -211,39 +201,16 @@ export default function DashboardPage() {
             <Empty text="No hay tareas pendientes." />
           ) : (
             <div style={{ padding: 6 }}>
-              {pending.slice(0, 8).map((t) => (
-                <div
+              {pending.slice(0, 12).map((t) => (
+                <QueueItem
                   key={t.id}
-                  style={{
-                    padding: "9px 10px",
-                    display: "flex",
-                    gap: 10,
-                    alignItems: "center",
-                    justifyContent: "space-between",
+                  task={t}
+                  projectName={projName(t.project_id)}
+                  onChanged={async (m) => {
+                    if (m) setMsg(m);
+                    await load();
                   }}
-                >
-                  <div style={{ minWidth: 0 }}>
-                    <div
-                      style={{
-                        fontSize: 13,
-                        overflow: "hidden",
-                        textOverflow: "ellipsis",
-                        whiteSpace: "nowrap",
-                      }}
-                    >
-                      {t.title}
-                    </div>
-                    <div className="muted" style={{ fontSize: 11 }}>
-                      {projName(t.project_id)} ·{" "}
-                      <span className={statusBadgeClass(t.status)}>
-                        {taskStatusLabel(t.status)}
-                      </span>
-                    </div>
-                  </div>
-                  <button className="btn btn-sm" onClick={() => runTask(t.id)}>
-                    Ejecutar
-                  </button>
-                </div>
+                />
               ))}
             </div>
           )}
@@ -281,6 +248,116 @@ function Empty({ text }: { text: string }) {
       style={{ padding: 24, textAlign: "center", fontSize: 13 }}
     >
       {text}
+    </div>
+  );
+}
+
+function QueueItem({
+  task,
+  projectName,
+  onChanged,
+}: {
+  task: Task;
+  projectName: string;
+  onChanged: (msg?: string) => void;
+}) {
+  const [when, setWhen] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const run = async () => {
+    setBusy(true);
+    try {
+      const r = await api.post(`/api/tasks/${task.id}/run`);
+      onChanged(r.started ? "Run iniciado" : r.queued ? "En cola" : r.reason);
+    } catch (e) {
+      onChanged((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  const queue = async () => {
+    setBusy(true);
+    try {
+      await api.post(`/api/tasks/${task.id}/queue`, {});
+      onChanged("Encolada");
+    } catch (e) {
+      onChanged((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  const schedule = async () => {
+    if (!when) return;
+    setBusy(true);
+    try {
+      await api.post(`/api/tasks/${task.id}/queue`, {
+        scheduled_for: new Date(when).toISOString(),
+      });
+      onChanged("Programada");
+      setWhen("");
+    } catch (e) {
+      onChanged((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div style={{ padding: "9px 10px", borderBottom: "1px solid var(--border)" }}>
+      <div
+        style={{
+          display: "flex",
+          gap: 10,
+          alignItems: "center",
+          justifyContent: "space-between",
+        }}
+      >
+        <div style={{ minWidth: 0 }}>
+          <div
+            style={{
+              fontSize: 13,
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+            }}
+          >
+            {task.title}
+          </div>
+          <div className="muted" style={{ fontSize: 11 }}>
+            {projectName} ·{" "}
+            <span className={statusBadgeClass(task.status)}>
+              {taskStatusLabel(task.status)}
+            </span>
+            {task.scheduled_for && (
+              <> · 🕒 {new Date(task.scheduled_for).toLocaleString()}</>
+            )}
+          </div>
+        </div>
+        <div style={{ display: "flex", gap: 6 }}>
+          <button className="btn btn-sm" onClick={run} disabled={busy}>
+            Ejecutar
+          </button>
+          <button className="btn btn-sm" onClick={queue} disabled={busy}>
+            Encolar
+          </button>
+        </div>
+      </div>
+      <div style={{ display: "flex", gap: 6, marginTop: 8, alignItems: "center" }}>
+        <input
+          type="datetime-local"
+          className="input"
+          style={{ maxWidth: 210, padding: "4px 8px", fontSize: 12 }}
+          value={when}
+          onChange={(e) => setWhen(e.target.value)}
+        />
+        <button
+          className="btn btn-sm"
+          onClick={schedule}
+          disabled={busy || !when}
+        >
+          Programar
+        </button>
+      </div>
     </div>
   );
 }
