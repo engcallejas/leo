@@ -1,0 +1,32 @@
+services:
+  leo:
+    build: .
+    image: leo
+    container_name: leo
+    ports:
+      - "${PORT:-3000}:3000"
+    environment:
+      - LEO_DATA_DIR=/app/data
+      # Subscription auth: token comes from .env (claude setup-token).
+      - CLAUDE_CODE_OAUTH_TOKEN=${CLAUDE_CODE_OAUTH_TOKEN:-}
+      # NOTE: ANTHROPIC_API_KEY is intentionally never set — Leo uses the Claude
+      # subscription, never API-key billing (it is also stripped at runtime).
+    volumes:
+      # Persist SQLite DB + run logs.
+      - ./data:/app/data
+      # Your local repos. Inside the container they live under /repos, so set
+      # each project's "repo_path" to /repos/<repo-name>.
+      - ${REPOS_DIR:-./repos}:/repos
+      # Persist Claude config/cache (auth refresh, etc.).
+      - leo-claude:/home/node/.claude
+      # --- Optional: reuse host git/gh/ssh creds so commit+push & PRs work ---
+      # - ${HOME}/.gitconfig:/home/node/.gitconfig:ro
+      # - ${HOME}/.ssh:/home/node/.ssh:ro
+      # - ${HOME}/.config/gh:/home/node/.config/gh:ro
+    # Lets Claude/MCPs reach services running on the host (e.g. local Supabase).
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+
+volumes:
+  leo-claude:
