@@ -376,8 +376,10 @@ export function ProjectForm({
           </span>
         </label>
         <div className="hint">
-          Inyecta un MCP que deja a Claude pausar y preguntarte desde la UI del
-          run (p. ej. decisiones de ambigüedad en SDD/AIDLC) en vez de asumir.
+          Inyecta un MCP que deja a Claude pausar y preguntarte desde la UI. Aplica
+          tanto al <strong>refinamiento</strong> (pregunta lo necesario antes de
+          generar el plan; si hay docs SDD/AIDLC sigue ese marco) como a las
+          ejecuciones de desarrollo, en vez de asumir.
         </div>
       </div>
 

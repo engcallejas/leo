@@ -122,6 +122,7 @@ export function RefineProgress({
 
 function colorFor(kind: string): string {
   if (kind === "assistant") return "var(--accent)";
+  if (kind === "ask") return "var(--warn, #b58900)";
   if (kind === "tool") return "var(--warn)";
   if (kind === "result") return "var(--ok)";
   if (kind === "error") return "var(--danger)";
@@ -131,6 +132,7 @@ function labelFor(kind: string): string {
   return (
     {
       assistant: "claude",
+      ask: "pregunta",
       tool: "lee",
       result: "✓",
       start: "▶",
@@ -160,6 +162,12 @@ function formatRefineLine(line: string): Entry | null {
       if (bl.type === "text" && String(bl.text).trim()) parts.push(String(bl.text).trim());
       else if (bl.type === "tool_use") {
         const inp = bl.input as Record<string, unknown> | undefined;
+        const name = String(bl.name ?? "");
+        // A question to the human stands out from plain file reads.
+        if (name.includes("ask_user") || name.includes("request_approval")) {
+          const q = String(inp?.question ?? inp?.action ?? "").trim();
+          return { kind: "ask", text: `🙋 te pregunta: ${q.slice(0, 200)}` };
+        }
         const target =
           (inp?.file_path as string) ||
           (inp?.pattern as string) ||

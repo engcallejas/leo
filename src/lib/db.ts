@@ -44,6 +44,47 @@ async function ensureColumn(
   }
 }
 
+/**
+ * Older DBs created run_interactions.run_id as NOT NULL (REFERENCES runs). To
+ * let plan refinements raise interactions (run_id NULL, plan_id set), rebuild
+ * the table once if run_id is still NOT NULL. SQLite can't ALTER a column's
+ * nullability, so we copy through a temp table. Idempotent.
+ */
+async function relaxInteractionsRunId(db: Client): Promise<void> {
+  const info = await db.execute("PRAGMA table_info(run_interactions)");
+  const runIdCol = info.rows.find(
+    (r) => (r as { name?: string }).name === "run_id",
+  ) as { notnull?: number } | undefined;
+  if (!runIdCol || Number(runIdCol.notnull) !== 1) return; // already nullable
+  await db.executeMultiple(`
+    BEGIN;
+    CREATE TABLE run_interactions_new (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      run_id      INTEGER,
+      plan_id     INTEGER,
+      task_id     INTEGER,
+      kind        TEXT NOT NULL DEFAULT 'question',
+      question    TEXT NOT NULL,
+      options     TEXT NOT NULL DEFAULT '[]',
+      status      TEXT NOT NULL DEFAULT 'pending',
+      answer      TEXT,
+      created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+      answered_at TEXT
+    );
+    INSERT INTO run_interactions_new
+      (id, run_id, plan_id, task_id, kind, question, options, status, answer, created_at, answered_at)
+      SELECT id, run_id, plan_id, task_id, kind, question, options, status, answer, created_at, answered_at
+      FROM run_interactions;
+    DROP TABLE run_interactions;
+    ALTER TABLE run_interactions_new RENAME TO run_interactions;
+    CREATE INDEX IF NOT EXISTS idx_interactions_run ON run_interactions(run_id);
+    CREATE INDEX IF NOT EXISTS idx_interactions_plan ON run_interactions(plan_id);
+    CREATE INDEX IF NOT EXISTS idx_interactions_status ON run_interactions(status);
+    COMMIT;
+    PRAGMA foreign_keys=ON;
+  `);
+}
+
 const DEFAULT_SETTINGS: Record<string, string> = {
   poll_interval_seconds: "60",
   max_concurrent_runs: "2",
@@ -90,6 +131,13 @@ export function migrate(): Promise<void> {
       // ClickUp subtask chain execution (one run per subtask, shared branch).
       await ensureColumn(db, "tasks", "parent_task_id", "INTEGER");
       await ensureColumn(db, "tasks", "chain_branch", "TEXT");
+      // Plan-scoped interactions: add plan_id and relax run_id (NOT NULL → NULL)
+      // so refinement can ask the human, reusing the run_interactions table.
+      await ensureColumn(db, "run_interactions", "plan_id", "INTEGER");
+      await relaxInteractionsRunId(db);
+      await db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_interactions_plan ON run_interactions(plan_id)",
+      );
       for (const [key, value] of Object.entries(DEFAULT_SETTINGS)) {
         await db.execute({
           sql: "INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO NOTHING",

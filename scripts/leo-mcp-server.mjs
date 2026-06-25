@@ -13,6 +13,11 @@
 
 const BASE = process.env.LEO_BASE_URL || "http://127.0.0.1:3000";
 const RUN_ID = process.env.LEO_RUN_ID || "";
+// Where to POST new interactions. Dev runs default to the run endpoint; plan
+// refinements override this with /api/plans/<id>/interactions. The poll/answer
+// endpoints are keyed by interaction id, so they work the same for both.
+const CREATE_PATH =
+  process.env.LEO_INTERACTIONS_PATH || `/api/runs/${RUN_ID}/interactions`;
 const POLL_MS = 1500;
 const TIMEOUT_MS = 30 * 60 * 1000; // 30 min
 
@@ -32,7 +37,7 @@ function log(...a) {
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 async function createInteraction(kind, question, options) {
-  const res = await fetch(`${BASE}/api/runs/${RUN_ID}/interactions`, {
+  const res = await fetch(`${BASE}${CREATE_PATH}`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ kind, question, options: options || [] }),
@@ -172,4 +177,4 @@ process.stdin.on("data", (chunk) => {
   }
 });
 process.stdin.on("end", () => process.exit(0));
-log(`started for run ${RUN_ID} → ${BASE}`);
+log(`started → ${BASE}${CREATE_PATH}`);

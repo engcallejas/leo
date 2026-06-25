@@ -15,9 +15,9 @@ import {
   replaceSteps,
   updatePlan,
 } from "../plan-repo";
-import { getIntegration, getProject } from "../repo";
+import { cancelPlanInteractions, getIntegration, getProject } from "../repo";
 import { getSettings } from "../settings";
-import { buildSpecContext } from "../specs";
+import { buildSpecContext, detectSpecFramework, type SpecFramework } from "../specs";
 import type { Plan, Project, RefineResult } from "../types";
 import { buildAttachmentBlock, buildRunExtras } from "./run-config";
 
@@ -85,6 +85,8 @@ function buildRefinePrompt(
   seedContext: string,
   specContext: string,
   attachmentBlock: string,
+  interactive: boolean,
+  framework: SpecFramework | null,
 ): string {
   const sourceLabel =
     plan.source_type === "manual"
@@ -94,6 +96,7 @@ function buildRefinePrompt(
   const sections: string[] = [
     `You are a senior engineer and product analyst doing REQUIREMENTS REFINEMENT for the "${project.name}" repository.`,
     `You are STRICTLY READ-ONLY: do NOT modify files, do NOT run commands that change state, do NOT commit or push. Use Read/Grep/Glob to inspect the codebase so your plan is grounded in how this project actually works (its CLAUDE.md, conventions, modules, and validations).`,
+    `If MCP tools are available (e.g. Supabase), use them ONLY to INSPECT — list tables, read rows, SELECT queries, get configs. NEVER call MCP tools that mutate: no INSERT/UPDATE/DELETE or DDL, no apply_migration, no deploy, no create/update/delete of projects/branches/functions. They are for grounding the plan, not for making changes.`,
     `\n## Seed (source: ${sourceLabel})`,
     `Title: ${plan.title}`,
     plan.source_url ? `Link: ${plan.source_url}` : "",
@@ -117,6 +120,28 @@ function buildRefinePrompt(
 
   if (attachmentBlock.trim()) {
     sections.push(`\n${attachmentBlock.trim()}`);
+  }
+
+  if (framework) {
+    sections.push(
+      `\n## Requirements framework: ${framework.label}`,
+      framework.guidance,
+    );
+  }
+
+  if (interactive) {
+    const frameworkNote = framework
+      ? ` Frame your questions around the ${framework.label} expectations above.`
+      : "";
+    sections.push(
+      `\n## Ask the human FIRST (clarify before planning)`,
+      `You can talk to the human through the \`mcp__leo__ask_user\` tool. The whole point of this refinement is to remove ambiguity, so DO use it.`,
+      `1. After a quick read of the request, the source context and the repo, list the open questions whose answers would change the plan (scope boundaries, expected behavior, edge cases, acceptance criteria, data/contracts, non-functional constraints, which existing files/specs to touch).${frameworkNote}`,
+      `2. Ask the MOST IMPORTANT ones via \`mcp__leo__ask_user\` — one focused question per call, and provide an \`options\` array when there are natural choices so the human can answer in one click. Ask only what genuinely blocks a good plan: aim for the few that matter (roughly 1–5), not a long interrogation. Prefer questions over guessing on anything that would materially change the work.`,
+      `3. WAIT for each answer and incorporate it. If a question times out or is skipped, proceed with your best, clearly-stated assumption.`,
+      `4. Only then produce the refined requirement and steps below, reflecting the answers.`,
+      `(Do NOT use \`mcp__leo__ask_user\` for trivia you can resolve by reading the code — reserve it for real product/scope decisions only the human can make.)`,
+    );
   }
 
   sections.push(
@@ -157,20 +182,18 @@ function buildRefineArgs(
     "--output-format",
     "stream-json",
     "--verbose",
-    "--permission-mode",
-    "acceptEdits",
-    // Hard block any state-changing tool so a read-only refinement can never
-    // edit the repo or hang on a permission prompt without a TTY.
+    // Skip permission PROMPTS so MCP tools work headlessly (any server name),
+    // while --disallowedTools still HARD-BLOCKS state-changing tools — verified:
+    // disallowedTools is honored even under --dangerously-skip-permissions. This
+    // keeps the refinement read-only (no file/shell edits) yet lets it inspect
+    // via MCP (e.g. Supabase list/select). The prompt forbids mutating MCP calls.
+    "--dangerously-skip-permissions",
     "--disallowedTools",
     "Edit,MultiEdit,Write,NotebookEdit,Bash",
     "--max-turns",
     "60",
   ];
-  // Pre-approve the planning MCP tools so they don't prompt (read tools are
-  // already auto-allowed; this only adds the MCP servers).
-  if (allowedMcpTools.length) {
-    args.push("--allowedTools", allowedMcpTools.join(","));
-  }
+  void allowedMcpTools; // bypass auto-approves MCP tools; kept for signature compat
   if (model && model.trim()) args.push("--model", model.trim());
   args.push(...extraArgs);
   args.push("--add-dir", project.repo_path);
@@ -277,6 +300,9 @@ async function finalizeRefinement(planId: number, logPath: string): Promise<void
     return;
   }
 
+  // The refinement process has exited; release any question still waiting on the
+  // human so the UI stops showing a stale prompt.
+  await cancelPlanInteractions(planId).catch(() => {});
   const result = parseFinalResult(logPath);
   const parsed = result?.result ? extractRefineJson(result.result) : null;
 
@@ -356,17 +382,24 @@ export async function startRefinement(planId: number): Promise<Plan> {
   const seedContext = await fetchSeedContext(plan);
   const specContext = buildSpecContext(project, true);
   const attachmentBlock = buildAttachmentBlock(await listAttachments(planId));
+  const framework = detectSpecFramework(project);
+  const interactive = !!project.interactive;
   const prompt = buildRefinePrompt(
     project,
     plan,
     seedContext,
     specContext,
     attachmentBlock,
+    interactive,
+    framework,
   );
   const extras = buildRunExtras({
     project,
     scope: "planning",
     baseName: `plan-refine-${planId}`,
+    // Lets the refinement ask the human via mcp__leo__ask_user (when the
+    // project has interactivity enabled); questions land on the plan page.
+    interactivePlanId: interactive ? planId : undefined,
   });
   const args = buildRefineArgs(
     project,

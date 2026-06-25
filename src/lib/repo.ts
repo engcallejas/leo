@@ -579,7 +579,8 @@ type InteractionRow = Record<string, unknown>;
 function mapInteraction(r: InteractionRow): RunInteraction {
   return {
     id: Number(r.id),
-    run_id: Number(r.run_id),
+    run_id: nOrNull(r.run_id),
+    plan_id: nOrNull(r.plan_id),
     task_id: nOrNull(r.task_id),
     kind: (r.kind as RunInteraction["kind"]) ?? "question",
     question: String(r.question),
@@ -592,16 +593,18 @@ function mapInteraction(r: InteractionRow): RunInteraction {
 }
 
 export async function createInteraction(input: {
-  run_id: number;
+  run_id?: number | null;
+  plan_id?: number | null;
   task_id: number | null;
   kind: RunInteraction["kind"];
   question: string;
   options: string[];
 }): Promise<RunInteraction> {
   const res = await run(
-    "INSERT INTO run_interactions (run_id, task_id, kind, question, options) VALUES (?, ?, ?, ?, ?)",
+    "INSERT INTO run_interactions (run_id, plan_id, task_id, kind, question, options) VALUES (?, ?, ?, ?, ?, ?)",
     [
-      input.run_id,
+      input.run_id ?? null,
+      input.plan_id ?? null,
       input.task_id,
       input.kind,
       input.question,
@@ -623,6 +626,7 @@ export async function getInteraction(
 
 export async function listInteractions(filter?: {
   run_id?: number;
+  plan_id?: number;
   status?: RunInteraction["status"];
   limit?: number;
 }): Promise<RunInteraction[]> {
@@ -631,6 +635,10 @@ export async function listInteractions(filter?: {
   if (filter?.run_id) {
     where.push("run_id = ?");
     args.push(filter.run_id);
+  }
+  if (filter?.plan_id) {
+    where.push("plan_id = ?");
+    args.push(filter.plan_id);
   }
   if (filter?.status) {
     where.push("status = ?");
@@ -660,6 +668,14 @@ export async function cancelRunInteractions(runId: number): Promise<void> {
   await run(
     "UPDATE run_interactions SET status = 'cancelled', answered_at = datetime('now') WHERE run_id = ? AND status = 'pending'",
     [runId],
+  );
+}
+
+/** Cancel any still-pending interactions for a plan (e.g. refinement ended). */
+export async function cancelPlanInteractions(planId: number): Promise<void> {
+  await run(
+    "UPDATE run_interactions SET status = 'cancelled', answered_at = datetime('now') WHERE plan_id = ? AND status = 'pending'",
+    [planId],
   );
 }
 

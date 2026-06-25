@@ -187,7 +187,10 @@ export interface Run {
 /** A question/approval Claude raised mid-run, awaiting a human answer in the UI. */
 export interface RunInteraction {
   id: number;
-  run_id: number;
+  /** Set when raised during a task run; null for plan-refinement questions. */
+  run_id: number | null;
+  /** Set when raised during a plan refinement; null for run questions. */
+  plan_id: number | null;
   task_id: number | null;
   /** 'question' = free/choice answer; 'approval' = allow/deny. */
   kind: "question" | "approval";

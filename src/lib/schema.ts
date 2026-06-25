@@ -139,9 +139,13 @@ CREATE TABLE IF NOT EXISTS plan_attachments (
 
 CREATE INDEX IF NOT EXISTS idx_plan_attachments_plan ON plan_attachments(plan_id);
 
+-- Interactions are raised either during a task run (run_id) or during a plan
+-- refinement (plan_id); exactly one of the two is set. Both are nullable so the
+-- same table serves dev runs and the planning/refinement flow.
 CREATE TABLE IF NOT EXISTS run_interactions (
   id          INTEGER PRIMARY KEY AUTOINCREMENT,
-  run_id      INTEGER NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+  run_id      INTEGER,
+  plan_id     INTEGER,
   task_id     INTEGER,
   kind        TEXT NOT NULL DEFAULT 'question',
   question    TEXT NOT NULL,
@@ -154,4 +158,6 @@ CREATE TABLE IF NOT EXISTS run_interactions (
 
 CREATE INDEX IF NOT EXISTS idx_interactions_run ON run_interactions(run_id);
 CREATE INDEX IF NOT EXISTS idx_interactions_status ON run_interactions(status);
+-- idx_interactions_plan is created in the migration step (db.ts), after the
+-- plan_id column is guaranteed to exist on already-existing databases.
 `;

@@ -13,6 +13,7 @@ import {
 } from "@/components/format";
 import { ErrorBar } from "@/components/ui";
 import { PlanAttachments } from "@/components/PlanAttachments";
+import { PlanInteractions } from "@/components/PlanInteractions";
 import { RefineProgress } from "@/components/RefineProgress";
 import { SpecViewer } from "@/components/SpecViewer";
 import type { PlanStep, PlanWithSteps } from "@/lib/types";
@@ -359,6 +360,8 @@ export default function PlanDetailPage() {
           </>
         )}
       </div>
+
+      <PlanInteractions planId={plan.id} active={refining} />
 
       <RefineProgress planId={plan.id} refining={refining} />
 

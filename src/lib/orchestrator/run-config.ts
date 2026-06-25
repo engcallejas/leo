@@ -53,9 +53,12 @@ export function buildRunExtras(opts: {
   project: Project;
   scope: "planning" | "development";
   baseName: string; // e.g. "run-12" or "plan-refine-3"
+  /** Dev run id to route Leo ask_user questions to. */
   interactiveRunId?: number;
+  /** Plan id to route Leo ask_user questions to (refinement). */
+  interactivePlanId?: number;
 }): RunExtras {
-  const { project, scope, baseName, interactiveRunId } = opts;
+  const { project, scope, baseName, interactiveRunId, interactivePlanId } = opts;
   const args: string[] = [];
   const allowedMcpTools: string[] = [];
 
@@ -69,17 +72,28 @@ export function buildRunExtras(opts: {
     allowedMcpTools.push(`mcp__${s.name}`);
   }
 
-  // Inject the Leo MCP for interactive runs (lets Claude ask the human).
-  if (interactiveRunId && project.interactive) {
+  // Inject the Leo MCP for interactive runs/refinements (Claude asks the human).
+  // Dev runs route to /api/runs/<id>/interactions; refinements to the plan
+  // endpoint. Interactions are polled by id, so the answer path is shared.
+  const leoEnv: Record<string, string> | null = interactiveRunId
+    ? {
+        LEO_BASE_URL: leoBaseUrl(),
+        LEO_RUN_ID: String(interactiveRunId),
+        LEO_INTERACTIONS_PATH: `/api/runs/${interactiveRunId}/interactions`,
+      }
+    : interactivePlanId
+      ? {
+          LEO_BASE_URL: leoBaseUrl(),
+          LEO_INTERACTIONS_PATH: `/api/plans/${interactivePlanId}/interactions`,
+        }
+      : null;
+  if (leoEnv && project.interactive) {
     const script = leoMcpScriptPath();
     if (fs.existsSync(script)) {
       mcpServers["leo"] = {
         command: process.execPath, // node
         args: [script],
-        env: {
-          LEO_BASE_URL: leoBaseUrl(),
-          LEO_RUN_ID: String(interactiveRunId),
-        },
+        env: leoEnv,
       };
       allowedMcpTools.push("mcp__leo");
     }
