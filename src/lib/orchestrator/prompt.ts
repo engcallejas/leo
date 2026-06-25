@@ -10,6 +10,42 @@ export interface ChainContext {
   priors: { title: string; summary: string }[];
 }
 
+/** The finalization bullet for an iteration, per the human's chosen PR mode. */
+export function iterationFinalizeLine(prMode: "commit" | "new_pr"): string {
+  return prMode === "new_pr"
+    ? `- Al terminar: crea una branch NUEVA derivada del trabajo anterior y abre un PULL REQUEST NUEVO para esta iteración (no actualices el PR anterior). Asegúrate de que los checks pasen.`
+    : `- Al terminar: haz commit y push a la MISMA branch del trabajo anterior. NO abras un PR nuevo — si ya existe uno para esa branch, se actualizará solo.`;
+}
+
+/**
+ * Lean follow-up turn for a RESUMED iteration. The agent already carries the
+ * full memory of the previous run (task, rules, branch, PR, validations), so we
+ * only hand it the new human ask plus a short reminder of how to land it.
+ */
+export function buildIterationPrompt(
+  project: Project,
+  task: Task,
+  instruction: string,
+  prevRunId: number,
+  prMode: "commit" | "new_pr",
+  attachmentBlock = "",
+): string {
+  return [
+    `Esta es una NUEVA ITERACIÓN de tu trabajo anterior en la tarea "${task.title}" (run #${prevRunId}). Ya completaste una pasada —con su commit/branch/PR— y conservas todo ese contexto.`,
+    ``,
+    `## Ajuste pedido por el humano (esta iteración)`,
+    instruction.trim() || "(sin instrucción — revisa y mejora lo pendiente del run anterior)",
+    attachmentBlock ? `\n${attachmentBlock}` : "",
+    ``,
+    `## Cómo continuar`,
+    `- Aplica SOLO este ajuste, construyendo sobre lo ya hecho; no rehagas lo que ya estaba correcto.`,
+    `- Vuelve a correr las validaciones del repo (CLAUDE.md, MCPs, tests) y déjalas en verde antes de terminar.`,
+    `- Puedes recibir más correcciones del humano sobre la marcha (Leo te las inyecta automáticamente); incorpóralas.`,
+    iterationFinalizeLine(prMode),
+    `- Al terminar, resume QUÉ cambiaste en esta iteración y el estado del PR/branch.`,
+  ].join("\n");
+}
+
 /**
  * Compose the full instruction handed to `claude -p`. The repo's own CLAUDE.md
  * and .mcp.json are picked up automatically by the CLI (cwd = repo), so this

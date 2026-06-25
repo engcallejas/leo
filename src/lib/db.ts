@@ -131,6 +131,10 @@ export function migrate(): Promise<void> {
       // ClickUp subtask chain execution (one run per subtask, shared branch).
       await ensureColumn(db, "tasks", "parent_task_id", "INTEGER");
       await ensureColumn(db, "tasks", "chain_branch", "TEXT");
+      // Iteration lineage: a run can continue a previous finished run.
+      await ensureColumn(db, "runs", "parent_run_id", "INTEGER");
+      // Steering notes can carry images (JSON array of {filename,path,mime}).
+      await ensureColumn(db, "run_notes", "images", "TEXT");
       // Plan-scoped interactions: add plan_id and relax run_id (NOT NULL → NULL)
       // so refinement can ask the human, reusing the run_interactions table.
       await ensureColumn(db, "run_interactions", "plan_id", "INTEGER");

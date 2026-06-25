@@ -13,6 +13,7 @@ import {
   timeAgo,
 } from "@/components/format";
 import { RunInteractions } from "@/components/RunInteractions";
+import { RunIterate } from "@/components/RunIterate";
 import { RunNotes } from "@/components/RunNotes";
 import type { Run, Task } from "@/lib/types";
 
@@ -107,6 +108,18 @@ export default function RunDetailPage() {
         }
       />
 
+      {run.parent_run_id && (
+        <div style={{ marginBottom: 12, fontSize: 12.5 }}>
+          <Link
+            href={`/runs/${run.parent_run_id}`}
+            className="muted"
+            style={{ textDecoration: "none" }}
+          >
+            ↩ Iteración de run #{run.parent_run_id}
+          </Link>
+        </div>
+      )}
+
       <div
         style={{
           display: "grid",
@@ -160,6 +173,8 @@ export default function RunDetailPage() {
       <RunInteractions runId={run.id} active={run.status === "running"} />
 
       <RunNotes runId={run.id} active={run.status === "running"} />
+
+      <RunIterate run={run} />
 
       {run.error && (
         <div

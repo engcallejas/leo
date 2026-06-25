@@ -17,6 +17,9 @@ export const api = {
       headers: { "Content-Type": "application/json" },
       body: body != null ? JSON.stringify(body) : undefined,
     }).then(handle),
+  // Multipart POST — no Content-Type header so the browser sets the boundary.
+  postForm: (url: string, form: FormData) =>
+    fetch(url, { method: "POST", body: form }).then(handle),
   put: (url: string, body: unknown) =>
     fetch(url, {
       method: "PUT",

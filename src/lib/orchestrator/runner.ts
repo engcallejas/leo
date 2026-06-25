@@ -1,5 +1,6 @@
 import { spawn, type ChildProcess } from "child_process";
 import fs from "fs";
+import os from "os";
 import path from "path";
 import {
   assertRunnable,
@@ -21,9 +22,36 @@ import {
 } from "../repo";
 import { getSettings } from "../settings";
 import { buildSpecContext } from "../specs";
-import type { Project, Run, Task } from "../types";
-import { buildPrompt, type ChainContext } from "./prompt";
-import { buildRunExtras, mergeAllowedTools } from "./run-config";
+import type { AttachedImage, Project, Run, Task } from "../types";
+import {
+  buildIterationPrompt,
+  buildPrompt,
+  iterationFinalizeLine,
+  type ChainContext,
+} from "./prompt";
+import {
+  buildAttachmentBlock,
+  buildRunExtras,
+  mergeAllowedTools,
+} from "./run-config";
+
+/** How an iteration should finalize: keep the current PR vs. open a new one. */
+export type PrMode = "commit" | "new_pr";
+
+/** Options to continue a previous finished run as its next iteration. */
+export interface IterationOpts {
+  parentRunId: number;
+  /** The human's follow-up ask ("the fix") for this iteration. */
+  instruction: string;
+  /** When set, resume this exact session so the agent keeps full memory. */
+  resumeSessionId?: string;
+  /** Fresh-run seed (used when not resuming): a compacted/stored prior summary. */
+  seedSummary?: string;
+  /** Finalization: commit to the current branch/PR, or open a brand-new PR. */
+  prMode: PrMode;
+  /** Images the human attached to this iteration (read by the agent via Read). */
+  images?: AttachedImage[];
+}
 
 // Runs are spawned DETACHED and write their stream-json straight to the log
 // file, so they survive a Leo restart. We track them by pid and finalize each
@@ -321,10 +349,102 @@ function watchRun(
   setTimeout(tick, 2000);
 }
 
+/** True if a resumable transcript for this session id still exists on disk. */
+function sessionTranscriptExists(sessionId: string): boolean {
+  if (!sessionId) return false;
+  try {
+    const base = path.join(os.homedir(), ".claude", "projects");
+    for (const dir of fs.readdirSync(base)) {
+      if (fs.existsSync(path.join(base, dir, `${sessionId}.jsonl`))) return true;
+    }
+  } catch {
+    /* ~/.claude/projects missing or unreadable */
+  }
+  return false;
+}
+
+const COMPACT_PROMPT =
+  "Compacta esta conversación en un resumen de estado para que otro agente " +
+  "continúe el trabajo SIN leer todo el historial. Incluye, de forma concisa: " +
+  "(1) qué se implementó y los archivos/áreas tocadas; (2) la branch de trabajo " +
+  "y el PR (número/URL) si se abrió; (3) decisiones y supuestos clave; (4) qué " +
+  "quedó pendiente, fallando o sin verificar; (5) cómo correr las validaciones/" +
+  "tests relevantes. NO uses herramientas; responde solo con el resumen en markdown.";
+
+/**
+ * Distill a finished run's session into a tight status summary by resuming it in
+ * a forked, read-only, single-turn pass. Used by the "compactar antes" option so
+ * the next iteration starts fresh from the summary instead of dragging the full
+ * (possibly huge) transcript. Best-effort: returns null on any failure/timeout.
+ */
+export async function compactSession(
+  project: Project,
+  sessionId: string,
+): Promise<string | null> {
+  const gate = await assertRunnable(project);
+  if (!gate.ok) return null;
+  const exec = await resolveProjectExec(project);
+  const settings = await getSettings();
+  const env = await buildClaudeEnv({ method: exec.method, apiKey: exec.apiKey });
+  const args = [
+    "-p",
+    COMPACT_PROMPT,
+    "--resume",
+    sessionId,
+    "--fork-session",
+    "--output-format",
+    "json",
+    "--max-turns",
+    "1",
+    "--disallowedTools",
+    "Edit,MultiEdit,Write,NotebookEdit,Bash",
+  ];
+  if (exec.model && exec.model.trim()) args.push("--model", exec.model.trim());
+
+  return await new Promise<string | null>((resolve) => {
+    let out = "";
+    let child: ChildProcess;
+    try {
+      child = spawn(settings.claude_binary_path, args, {
+        cwd: project.repo_path,
+        env,
+        stdio: ["ignore", "pipe", "ignore"],
+      });
+    } catch {
+      resolve(null);
+      return;
+    }
+    const timer = setTimeout(() => {
+      try {
+        child.kill("SIGTERM");
+      } catch {
+        /* already gone */
+      }
+      resolve(null);
+    }, 180_000);
+    child.stdout?.on("data", (d) => (out += d.toString()));
+    child.once("error", () => {
+      clearTimeout(timer);
+      resolve(null);
+    });
+    child.once("close", () => {
+      clearTimeout(timer);
+      try {
+        const j = JSON.parse(out) as { result?: unknown; is_error?: boolean };
+        const text = typeof j.result === "string" ? j.result.trim() : "";
+        resolve(text || null);
+      } catch {
+        resolve(out.trim() || null);
+      }
+    });
+  });
+}
+
 export async function startRun(
   task: Task,
   project: Project,
   chain?: ChainContext,
+  iteration?: IterationOpts,
 ): Promise<Run> {
   const settings = await getSettings();
 
@@ -332,6 +452,7 @@ export async function startRun(
     task_id: task.id,
     project_id: project.id,
     log_path: path.join(LOGS_DIR, "pending.jsonl"),
+    parent_run_id: iteration?.parentRunId ?? null,
   });
   const logPath = path.join(LOGS_DIR, `run-${runRow.id}.jsonl`);
   fs.writeFileSync(logPath, "");
@@ -394,9 +515,45 @@ export async function startRun(
       ? `\n\n## Capturas para ClickUp\nSi generas screenshots/capturas (p. ej. en la verificación visual), guárdalas como archivos de imagen en "${artifactsDir}". Leo las adjuntará automáticamente a la tarea de ClickUp al terminar con éxito.`
       : "";
 
-  const basePrompt = buildPrompt(project, task, extraContext, chain);
-  const prompt =
-    `${basePrompt}${specContext ? `\n\n${specContext}` : ""}${interactiveNote}${artifactNote}`;
+  // Images the human attached to an iteration (read by the agent via Read).
+  const iterAttachBlock = iteration
+    ? buildAttachmentBlock(
+        iteration.images ?? [],
+        "## Imágenes adjuntas a esta iteración",
+      )
+    : "";
+
+  let prompt: string;
+  if (iteration?.resumeSessionId) {
+    // Resume: the agent already remembers everything — keep the turn lean.
+    prompt = `${buildIterationPrompt(
+      project,
+      task,
+      iteration.instruction,
+      iteration.parentRunId,
+      iteration.prMode,
+      iterAttachBlock,
+    )}${interactiveNote}${artifactNote}`;
+  } else {
+    // Fresh run (incl. compacted iterations): give full task context, plus the
+    // prior summary + the requested adjustment when this is an iteration.
+    let ctx = extraContext;
+    let iterAjuste = "";
+    if (iteration) {
+      const prior = iteration.seedSummary?.trim()
+        ? `### Estado del trabajo anterior (run #${iteration.parentRunId}, resumen)\n${iteration.seedSummary.trim()}`
+        : `Esta es una continuación del run #${iteration.parentRunId}.`;
+      ctx = [extraContext, prior].filter(Boolean).join("\n\n");
+      iterAjuste = `\n\n## Ajuste pedido en esta iteración (PRIORITARIO)\n${
+        iteration.instruction.trim() ||
+        "(sin instrucción — revisa y mejora lo pendiente del run anterior)"
+      }${iterAttachBlock ? `\n\n${iterAttachBlock}` : ""}\n\nAplica solo este ajuste, construyendo sobre lo ya hecho.\n${iterationFinalizeLine(
+        iteration.prMode,
+      )}`;
+    }
+    const basePrompt = buildPrompt(project, task, ctx, chain);
+    prompt = `${basePrompt}${specContext ? `\n\n${specContext}` : ""}${interactiveNote}${artifactNote}${iterAjuste}`;
+  }
 
   // Per-run MCP servers (dev scope) + hooks settings + the Leo ask_user MCP
   // when this project is interactive.
@@ -410,8 +567,14 @@ export async function startRun(
     project.allowed_tools,
     extras.allowedMcpTools,
   );
+  // Resume the prior session (forked so the original stays intact and this run
+  // gets its own session id for further iterations).
+  const iterArgs = iteration?.resumeSessionId
+    ? ["--resume", iteration.resumeSessionId, "--fork-session"]
+    : [];
   const args = buildArgs(project, prompt, exec.model, allowedTools, [
     ...extras.args,
+    ...iterArgs,
     "--add-dir",
     artifactsDir,
   ]);
@@ -423,6 +586,12 @@ export async function startRun(
     auth_method: exec.method,
     model: exec.model,
     mcp: extras.allowedMcpTools,
+    ...(iteration
+      ? {
+          iteration_of: iteration.parentRunId,
+          resumed: !!iteration.resumeSessionId,
+        }
+      : {}),
     prompt,
   });
 
@@ -479,6 +648,61 @@ export async function startRun(
   watchRun(runRow.id, child.pid, task, project, logPath);
 
   return (await getRun(runRow.id))!;
+}
+
+/**
+ * Continue a FINISHED run as its next iteration. By default it resumes the exact
+ * Claude session (full memory) and applies the human's follow-up. With
+ * `compact`, it first distills the session into a summary and starts fresh from
+ * it (lighter context). If the session transcript is gone, it falls back to a
+ * fresh run seeded with the stored result summary.
+ */
+export async function iterateRun(
+  parentRunId: number,
+  instruction: string,
+  opts: { compact?: boolean; prMode?: PrMode; images?: AttachedImage[] } = {},
+): Promise<Run> {
+  const parent = await getRun(parentRunId);
+  if (!parent) throw new Error("Run no encontrado.");
+  if (parent.status === "running") {
+    throw new Error("El run aún está en ejecución; espera a que termine para iterar.");
+  }
+  const task = await getTask(parent.task_id);
+  const project = await getProject(parent.project_id);
+  if (!task || !project) {
+    throw new Error("La tarea o el proyecto de este run ya no existe.");
+  }
+
+  const canResume =
+    !!parent.session_id && sessionTranscriptExists(parent.session_id);
+  const base = {
+    parentRunId,
+    instruction,
+    prMode: opts.prMode ?? "commit",
+    images: opts.images ?? [],
+  };
+
+  // Reflect that the task is being worked on again until the new run finalizes.
+  await setTaskStatus(task.id, "running").catch(() => {});
+
+  if (canResume && opts.compact) {
+    const summary = await compactSession(project, parent.session_id!);
+    return startRun(task, project, undefined, {
+      ...base,
+      seedSummary: summary ?? parent.result_summary ?? "",
+    });
+  }
+  if (canResume) {
+    return startRun(task, project, undefined, {
+      ...base,
+      resumeSessionId: parent.session_id!,
+    });
+  }
+  // Session gone → fresh run seeded with whatever summary we stored.
+  return startRun(task, project, undefined, {
+    ...base,
+    seedSummary: parent.result_summary ?? "",
+  });
 }
 
 /**

@@ -1,15 +1,18 @@
 import fs from "fs";
 import path from "path";
 import { LOGS_DIR, UPLOADS_DIR } from "../db";
-import type { McpServer, PlanAttachment, Project } from "../types";
+import type { McpServer, Project } from "../types";
 
 /** A prompt block pointing Claude at uploaded images it can read with Read. */
-export function buildAttachmentBlock(attachments: PlanAttachment[]): string {
+export function buildAttachmentBlock(
+  attachments: { filename: string; mime: string | null; path: string }[],
+  heading = "## Imágenes adjuntas",
+): string {
   if (!attachments.length) return "";
   const lines = attachments.map(
     (a) => `- ${a.filename}${a.mime ? ` (${a.mime})` : ""}: ${a.path}`,
   );
-  return `## Imágenes adjuntas\nEl usuario adjuntó estas imágenes (mockups, capturas, referencias). Léelas con la tool Read usando su ruta absoluta para entender el diseño/objetivo esperado:\n${lines.join("\n")}`;
+  return `${heading}\nEl usuario adjuntó estas imágenes (mockups, capturas, referencias). Léelas con la tool Read usando su ruta absoluta para entender el diseño/objetivo esperado:\n${lines.join("\n")}`;
 }
 
 /** Absolute path to the bundled Leo MCP server (ask_user / request_approval). */
@@ -120,14 +123,39 @@ export function buildRunExtras(opts: {
   }
 
   // Hooks via a settings file (dev runs only — planning is read-only analysis).
-  if (scope === "development" && project.hooks && project.hooks.trim()) {
-    try {
-      const parsed = JSON.parse(project.hooks);
-      const settingsPath = path.join(LOGS_DIR, `${baseName}.settings.json`);
-      fs.writeFileSync(settingsPath, JSON.stringify({ hooks: parsed }, null, 2));
-      args.push("--settings", settingsPath);
-    } catch {
-      /* invalid hooks JSON → ignore (validated in the UI) */
+  // We merge the project's own hooks with Leo's steering hooks, which PUSH any
+  // queued human notes into the run at every tool boundary and gate the agent
+  // from finishing while steering is still undelivered. This makes note delivery
+  // reliable instead of relying on the agent calling the check_in MCP tool.
+  if (scope === "development") {
+    const hooks: Record<string, unknown[]> = {};
+    if (project.hooks && project.hooks.trim()) {
+      try {
+        const parsed = JSON.parse(project.hooks) as Record<string, unknown>;
+        for (const [evt, arr] of Object.entries(parsed)) {
+          if (Array.isArray(arr)) hooks[evt] = [...arr];
+        }
+      } catch {
+        /* invalid hooks JSON → ignore (validated in the UI) */
+      }
+    }
+    if (interactiveRunId) {
+      const hookScript = path.join(process.cwd(), "scripts", "leo-steering-hook.mjs");
+      if (fs.existsSync(hookScript)) {
+        const cmd = `"${process.execPath}" "${hookScript}" ${interactiveRunId} "${leoBaseUrl()}"`;
+        const entry = { hooks: [{ type: "command", command: cmd }] };
+        (hooks.PostToolUse ??= []).push({ matcher: "", ...entry });
+        (hooks.Stop ??= []).push(entry);
+      }
+    }
+    if (Object.keys(hooks).length > 0) {
+      try {
+        const settingsPath = path.join(LOGS_DIR, `${baseName}.settings.json`);
+        fs.writeFileSync(settingsPath, JSON.stringify({ hooks }, null, 2));
+        args.push("--settings", settingsPath);
+      } catch {
+        /* ignore — better to run without hooks than to fail the run */
+      }
     }
   }
 

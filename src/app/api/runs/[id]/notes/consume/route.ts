@@ -14,7 +14,15 @@ export async function POST(_req: Request, { params }: Ctx) {
   const { id } = await params;
   try {
     const notes = await consumePendingRunNotes(Number(id));
-    return json({ notes: notes.map((n) => n.text) });
+    return json({
+      notes: notes.map((n) => {
+        if (!n.images.length) return n.text;
+        const imgs = n.images
+          .map((im) => `- ${im.filename}: ${im.path}`)
+          .join("\n");
+        return `${n.text}\n\n[Imágenes adjuntas por el humano — léelas con la tool Read usando su ruta absoluta:\n${imgs}]`;
+      }),
+    });
   } catch (e) {
     return serverError(e);
   }

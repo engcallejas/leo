@@ -170,6 +170,8 @@ export interface Run {
   id: number;
   task_id: number;
   project_id: number;
+  /** Set when this run continues a previous finished run (next iteration). */
+  parent_run_id: number | null;
   status: RunStatus;
   pid: number | null;
   session_id: string | null;
@@ -185,10 +187,19 @@ export interface Run {
 }
 
 /** A steering note the human pushes to a running run; the agent pulls it at a checkpoint. */
+/** An image saved under UPLOADS_DIR that an agent can read via the Read tool. */
+export interface AttachedImage {
+  filename: string;
+  path: string;
+  mime: string;
+}
+
 export interface RunNote {
   id: number;
   run_id: number;
   text: string;
+  /** Images attached to this steering note (delivered as readable paths). */
+  images: AttachedImage[];
   delivered: boolean;
   created_at: string;
   delivered_at: string | null;

@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { api } from "@/components/client";
 import { timeAgo } from "@/components/format";
+import { ImageAttach, imageFilesFromPaste } from "@/components/ImageAttach";
 import type { RunNote } from "@/lib/types";
 
 /**
@@ -13,6 +14,7 @@ import type { RunNote } from "@/lib/types";
 export function RunNotes({ runId, active }: { runId: number; active: boolean }) {
   const [notes, setNotes] = useState<RunNote[]>([]);
   const [text, setText] = useState("");
+  const [images, setImages] = useState<File[]>([]);
   const [busy, setBusy] = useState(false);
 
   const load = useCallback(async () => {
@@ -32,12 +34,16 @@ export function RunNotes({ runId, active }: { runId: number; active: boolean }) 
 
   const send = async () => {
     const t = text.trim();
-    if (!t) return;
+    if ((!t && images.length === 0) || busy) return;
     setBusy(true);
     try {
-      const note: RunNote = await api.post(`/api/runs/${runId}/notes`, { text: t });
+      const form = new FormData();
+      form.set("text", t);
+      for (const f of images) form.append("file", f);
+      const note: RunNote = await api.postForm(`/api/runs/${runId}/notes`, form);
       setNotes((prev) => [...prev, note]);
       setText("");
+      setImages([]);
     } catch {
       /* ignore */
     } finally {
@@ -54,9 +60,10 @@ export function RunNotes({ runId, active }: { runId: number; active: boolean }) 
         💬 Instrucciones para el agente
       </div>
       <div className="hint" style={{ marginTop: 0, marginBottom: 10 }}>
-        Envía correcciones sobre la marcha. El agente las recoge en su próximo
-        checkpoint (antes de commit/PR, entre pasos) y las incorpora — no es
-        instantáneo. Requiere que el proyecto tenga activadas las preguntas de Claude.
+        Envía correcciones sobre la marcha. Leo las inyecta automáticamente en
+        cuanto el agente termina su siguiente herramienta, y le impide cerrar la
+        tarea mientras haya notas sin entregar — así llegan en segundos/minutos,
+        no al instante. Aplica a runs iniciados con esta versión.
       </div>
 
       {notes.length > 0 && (
@@ -71,21 +78,40 @@ export function RunNotes({ runId, active }: { runId: number; active: boolean }) 
                 border: "1px solid var(--border)",
               }}
             >
-              <div style={{ fontSize: 13, whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>
-                {n.text}
-              </div>
+              {n.text && (
+                <div style={{ fontSize: 13, whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>
+                  {n.text}
+                </div>
+              )}
+              {n.images.length > 0 && (
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: n.text ? 6 : 0 }}>
+                  {n.images.map((im, i) => (
+                    <span key={i} className="badge" style={{ fontSize: 10 }}>
+                      🖼️ {im.filename}
+                    </span>
+                  ))}
+                </div>
+              )}
               <div
                 className="muted"
                 style={{ fontSize: 11, marginTop: 5, display: "flex", gap: 8 }}
               >
                 <span>{timeAgo(n.created_at)}</span>
                 <span
-                  className={
-                    n.delivered ? "badge badge-ok badge-dot" : "badge badge-warn badge-dot"
-                  }
+                  className={`badge badge-dot ${
+                    n.delivered
+                      ? "badge-ok"
+                      : active
+                        ? "badge-warn"
+                        : "badge-danger"
+                  }`}
                   style={{ fontSize: 10, padding: "1px 7px" }}
                 >
-                  {n.delivered ? "entregada al agente" : "pendiente de entrega"}
+                  {n.delivered
+                    ? "entregada al agente"
+                    : active
+                      ? "pendiente de entrega"
+                      : "no entregada (el run terminó)"}
                 </span>
               </div>
             </div>
@@ -94,26 +120,43 @@ export function RunNotes({ runId, active }: { runId: number; active: boolean }) 
       )}
 
       {active && (
-        <div style={{ display: "flex", gap: 8, alignItems: "flex-end" }}>
+        <div style={{ display: "grid", gap: 8 }}>
           <textarea
             className="textarea"
             placeholder="Ej. “No toques el archivo de migraciones”, “usa el patrón de OrderDetailPage”, “agrega también un test RTL”…"
             value={text}
             disabled={busy}
             onChange={(e) => setText(e.target.value)}
+            onPaste={(e) => {
+              const imgs = imageFilesFromPaste(e);
+              if (imgs.length) {
+                e.preventDefault();
+                setImages((prev) => [...prev, ...imgs]);
+              }
+            }}
             onKeyDown={(e) => {
               if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) send();
             }}
-            style={{ flex: 1, minHeight: 52, fontFamily: "inherit", fontSize: 13 }}
+            style={{ width: "100%", minHeight: 52, fontFamily: "inherit", fontSize: 13 }}
           />
-          <button
-            className="btn btn-primary"
-            onClick={send}
-            disabled={busy || !text.trim()}
-            title="⌘/Ctrl + Enter"
+          <div
+            style={{
+              display: "flex",
+              gap: 8,
+              alignItems: "flex-end",
+              justifyContent: "space-between",
+            }}
           >
-            {busy ? "Enviando…" : "Enviar"}
-          </button>
+            <ImageAttach files={images} onChange={setImages} disabled={busy} />
+            <button
+              className="btn btn-primary"
+              onClick={send}
+              disabled={busy || (!text.trim() && images.length === 0)}
+              title="⌘/Ctrl + Enter"
+            >
+              {busy ? "Enviando…" : "Enviar"}
+            </button>
+          </div>
         </div>
       )}
     </div>

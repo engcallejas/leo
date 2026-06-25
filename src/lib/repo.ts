@@ -1,5 +1,6 @@
 import { query, queryOne, run } from "./db";
 import type {
+  AttachedImage,
   Integration,
   IntegrationType,
   McpServer,
@@ -467,6 +468,7 @@ function mapRun(r: RunRow): Run {
     id: Number(r.id),
     task_id: Number(r.task_id),
     project_id: Number(r.project_id),
+    parent_run_id: nOrNull(r.parent_run_id),
     status: r.status as RunStatus,
     pid: nOrNull(r.pid),
     session_id: (r.session_id as string) ?? null,
@@ -486,10 +488,11 @@ export async function createRun(input: {
   task_id: number;
   project_id: number;
   log_path: string;
+  parent_run_id?: number | null;
 }): Promise<Run> {
   const res = await run(
-    "INSERT INTO runs (task_id, project_id, status, log_path) VALUES (?, ?, 'running', ?)",
-    [input.task_id, input.project_id, input.log_path],
+    "INSERT INTO runs (task_id, project_id, parent_run_id, status, log_path) VALUES (?, ?, ?, 'running', ?)",
+    [input.task_id, input.project_id, input.parent_run_id ?? null, input.log_path],
   );
   return (await getRun(res.lastInsertRowid))!;
 }
@@ -682,20 +685,34 @@ export async function cancelPlanInteractions(planId: number): Promise<void> {
 
 // ---------- run notes (human → agent steering) ----------
 function mapNote(r: Record<string, unknown>): RunNote {
+  let images: AttachedImage[] = [];
+  if (r.images) {
+    try {
+      const parsed = JSON.parse(String(r.images));
+      if (Array.isArray(parsed)) images = parsed as AttachedImage[];
+    } catch {
+      /* malformed → none */
+    }
+  }
   return {
     id: Number(r.id),
     run_id: Number(r.run_id),
     text: String(r.text),
+    images,
     delivered: Number(r.delivered) === 1,
     created_at: String(r.created_at),
     delivered_at: (r.delivered_at as string) ?? null,
   };
 }
 
-export async function addRunNote(runId: number, text: string): Promise<RunNote> {
+export async function addRunNote(
+  runId: number,
+  text: string,
+  images: AttachedImage[] = [],
+): Promise<RunNote> {
   const res = await run(
-    "INSERT INTO run_notes (run_id, text) VALUES (?, ?)",
-    [runId, text],
+    "INSERT INTO run_notes (run_id, text, images) VALUES (?, ?, ?)",
+    [runId, text, images.length ? JSON.stringify(images) : null],
   );
   const r = await queryOne<Record<string, unknown>>(
     "SELECT * FROM run_notes WHERE id = ?",
