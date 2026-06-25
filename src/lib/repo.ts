@@ -2,12 +2,15 @@ import { query, queryOne, run } from "./db";
 import type {
   Integration,
   IntegrationType,
+  McpServer,
   PermissionMode,
   Project,
   ProjectAuthMethod,
   ProjectSource,
   Run,
+  RunInteraction,
   RunStatus,
+  SourceRole,
   SourceType,
   Task,
   TaskStatus,
@@ -137,6 +140,11 @@ function mapProject(r: ProjectRow): Project {
     enabled: toBool(r.enabled),
     resolve_source_on_done: toBool(r.resolve_source_on_done),
     auth_method: (r.auth_method as ProjectAuthMethod) ?? "inherit",
+    mcp_servers: parseJSON<McpServer[]>(r.mcp_servers, []),
+    strict_mcp: toBool(r.strict_mcp),
+    hooks: String(r.hooks ?? ""),
+    spec_globs: String(r.spec_globs ?? ""),
+    interactive: toBool(r.interactive),
     created_at: String(r.created_at),
     updated_at: String(r.updated_at),
   };
@@ -172,6 +180,11 @@ export interface ProjectInput {
   enabled?: boolean;
   resolve_source_on_done?: boolean;
   auth_method?: ProjectAuthMethod;
+  mcp_servers?: McpServer[];
+  strict_mcp?: boolean;
+  hooks?: string;
+  spec_globs?: string;
+  interactive?: boolean;
 }
 
 export async function createProject(input: ProjectInput): Promise<Project> {
@@ -179,8 +192,8 @@ export async function createProject(input: ProjectInput): Promise<Project> {
     `INSERT INTO projects
        (name, repo_path, base_branch, target_branch, prompt_rules, auto_mode,
         permission_mode, allowed_tools, disallowed_tools, model, max_turns, sources, enabled,
-        resolve_source_on_done, auth_method)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        resolve_source_on_done, auth_method, mcp_servers, strict_mcp, hooks, spec_globs, interactive)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       input.name,
       input.repo_path,
@@ -197,6 +210,11 @@ export async function createProject(input: ProjectInput): Promise<Project> {
       input.enabled === false ? 0 : 1,
       input.resolve_source_on_done === false ? 0 : 1,
       input.auth_method ?? "inherit",
+      JSON.stringify(input.mcp_servers ?? []),
+      input.strict_mcp ? 1 : 0,
+      input.hooks ?? "",
+      input.spec_globs ?? "",
+      input.interactive ? 1 : 0,
     ],
   );
   return (await getProject(res.lastInsertRowid))!;
@@ -214,7 +232,8 @@ export async function updateProject(
        name = ?, repo_path = ?, base_branch = ?, target_branch = ?, prompt_rules = ?,
        auto_mode = ?, permission_mode = ?, allowed_tools = ?, disallowed_tools = ?,
        model = ?, max_turns = ?, sources = ?, enabled = ?, resolve_source_on_done = ?,
-       auth_method = ?, updated_at = datetime('now')
+       auth_method = ?, mcp_servers = ?, strict_mcp = ?, hooks = ?, spec_globs = ?,
+       interactive = ?, updated_at = datetime('now')
      WHERE id = ?`,
     [
       merged.name,
@@ -232,6 +251,11 @@ export async function updateProject(
       merged.enabled ? 1 : 0,
       merged.resolve_source_on_done ? 1 : 0,
       merged.auth_method ?? "inherit",
+      JSON.stringify(merged.mcp_servers ?? []),
+      merged.strict_mcp ? 1 : 0,
+      merged.hooks ?? "",
+      merged.spec_globs ?? "",
+      merged.interactive ? 1 : 0,
       id,
     ],
   );
@@ -258,6 +282,9 @@ function mapTask(r: TaskRow): Task {
     raw: parseJSON(r.raw, null),
     status: r.status as TaskStatus,
     scheduled_for: (r.scheduled_for as string) ?? null,
+    source_role: (r.source_role as SourceRole) ?? "development",
+    parent_task_id: nOrNull(r.parent_task_id),
+    chain_branch: (r.chain_branch as string) ?? null,
     created_at: String(r.created_at),
     updated_at: String(r.updated_at),
   };
@@ -274,15 +301,18 @@ export interface TaskInput {
   raw?: unknown;
   status?: TaskStatus;
   scheduled_for?: string | null;
+  source_role?: SourceRole;
 }
 
 /** Insert or ignore (dedup on project_id+source_type+external_id). Returns the task. */
 export async function upsertTask(input: TaskInput): Promise<Task | null> {
   await run(
     `INSERT INTO tasks
-       (project_id, integration_id, source_type, external_id, title, description, url, raw, status, scheduled_for)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-     ON CONFLICT(project_id, source_type, external_id) DO NOTHING`,
+       (project_id, integration_id, source_type, external_id, title, description, url, raw, status, scheduled_for, source_role)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(project_id, source_type, external_id) DO UPDATE SET
+       source_role = excluded.source_role,
+       updated_at = datetime('now')`,
     [
       input.project_id,
       input.integration_id,
@@ -294,6 +324,7 @@ export async function upsertTask(input: TaskInput): Promise<Task | null> {
       input.raw != null ? JSON.stringify(input.raw) : null,
       input.status ?? "pending",
       input.scheduled_for ?? null,
+      input.source_role ?? "development",
     ],
   );
   const r = await queryOne<TaskRow>(
@@ -360,6 +391,71 @@ export async function claimTaskForRun(id: number): Promise<boolean> {
     [id],
   );
   return res.rowsAffected > 0;
+}
+
+// ---------- subtask chains ----------
+/** Mark a task as a chain parent (its subtasks run on a shared branch). */
+export async function markChainParent(
+  id: number,
+  branch: string,
+): Promise<void> {
+  await run(
+    "UPDATE tasks SET chain_branch = ?, updated_at = datetime('now') WHERE id = ?",
+    [branch, id],
+  );
+}
+
+/** Top-level chain parents currently orchestrating their subtasks. */
+export async function listChainParents(): Promise<Task[]> {
+  const rows = await query<TaskRow>(
+    "SELECT * FROM tasks WHERE chain_branch IS NOT NULL AND parent_task_id IS NULL AND status = 'running'",
+  );
+  return rows.map(mapTask);
+}
+
+/** A chain parent's child (subtask) tasks, ordered by id (creation order). */
+export async function listChildTasks(parentId: number): Promise<Task[]> {
+  const rows = await query<TaskRow>(
+    "SELECT * FROM tasks WHERE parent_task_id = ? ORDER BY id ASC",
+    [parentId],
+  );
+  return rows.map(mapTask);
+}
+
+/** Create (or refresh) the child task that executes one subtask of a chain. */
+export async function createChainChild(input: {
+  project_id: number;
+  integration_id: number | null;
+  external_id: string;
+  title: string;
+  url: string | null;
+  raw: unknown;
+  parent_task_id: number;
+  chain_branch: string;
+}): Promise<Task> {
+  await run(
+    `INSERT INTO tasks
+       (project_id, integration_id, source_type, external_id, title, url, raw, status, source_role, parent_task_id, chain_branch)
+     VALUES (?, ?, 'clickup', ?, ?, ?, ?, 'running', 'development', ?, ?)
+     ON CONFLICT(project_id, source_type, external_id) DO UPDATE SET
+       status = 'running', parent_task_id = excluded.parent_task_id,
+       chain_branch = excluded.chain_branch, updated_at = datetime('now')`,
+    [
+      input.project_id,
+      input.integration_id,
+      input.external_id,
+      input.title,
+      input.url,
+      input.raw != null ? JSON.stringify(input.raw) : null,
+      input.parent_task_id,
+      input.chain_branch,
+    ],
+  );
+  const r = await queryOne<TaskRow>(
+    "SELECT * FROM tasks WHERE project_id = ? AND source_type = 'clickup' AND external_id = ?",
+    [input.project_id, input.external_id],
+  );
+  return mapTask(r!);
 }
 
 // ---------- runs ----------
@@ -474,6 +570,96 @@ export async function reconcileOrphanRuns(): Promise<void> {
   );
   await run(
     "UPDATE tasks SET status = 'failed', updated_at = datetime('now') WHERE status = 'running'",
+  );
+}
+
+// ---------- run interactions (ask_user) ----------
+type InteractionRow = Record<string, unknown>;
+
+function mapInteraction(r: InteractionRow): RunInteraction {
+  return {
+    id: Number(r.id),
+    run_id: Number(r.run_id),
+    task_id: nOrNull(r.task_id),
+    kind: (r.kind as RunInteraction["kind"]) ?? "question",
+    question: String(r.question),
+    options: parseJSON<string[]>(r.options, []),
+    status: (r.status as RunInteraction["status"]) ?? "pending",
+    answer: (r.answer as string) ?? null,
+    created_at: String(r.created_at),
+    answered_at: (r.answered_at as string) ?? null,
+  };
+}
+
+export async function createInteraction(input: {
+  run_id: number;
+  task_id: number | null;
+  kind: RunInteraction["kind"];
+  question: string;
+  options: string[];
+}): Promise<RunInteraction> {
+  const res = await run(
+    "INSERT INTO run_interactions (run_id, task_id, kind, question, options) VALUES (?, ?, ?, ?, ?)",
+    [
+      input.run_id,
+      input.task_id,
+      input.kind,
+      input.question,
+      JSON.stringify(input.options ?? []),
+    ],
+  );
+  return (await getInteraction(res.lastInsertRowid))!;
+}
+
+export async function getInteraction(
+  id: number,
+): Promise<RunInteraction | null> {
+  const r = await queryOne<InteractionRow>(
+    "SELECT * FROM run_interactions WHERE id = ?",
+    [id],
+  );
+  return r ? mapInteraction(r) : null;
+}
+
+export async function listInteractions(filter?: {
+  run_id?: number;
+  status?: RunInteraction["status"];
+  limit?: number;
+}): Promise<RunInteraction[]> {
+  const where: string[] = [];
+  const args: (string | number)[] = [];
+  if (filter?.run_id) {
+    where.push("run_id = ?");
+    args.push(filter.run_id);
+  }
+  if (filter?.status) {
+    where.push("status = ?");
+    args.push(filter.status);
+  }
+  const clause = where.length ? `WHERE ${where.join(" AND ")}` : "";
+  const rows = await query<InteractionRow>(
+    `SELECT * FROM run_interactions ${clause} ORDER BY id ASC LIMIT ?`,
+    [...args, filter?.limit ?? 100],
+  );
+  return rows.map(mapInteraction);
+}
+
+export async function answerInteraction(
+  id: number,
+  answer: string,
+): Promise<RunInteraction | null> {
+  await run(
+    "UPDATE run_interactions SET status = 'answered', answer = ?, answered_at = datetime('now') WHERE id = ? AND status = 'pending'",
+    [answer, id],
+  );
+  return getInteraction(id);
+}
+
+/** Cancel any still-pending interactions for a run (e.g. when it finishes). */
+export async function cancelRunInteractions(runId: number): Promise<void> {
+  await run(
+    "UPDATE run_interactions SET status = 'cancelled', answered_at = datetime('now') WHERE run_id = ? AND status = 'pending'",
+    [runId],
   );
 }
 

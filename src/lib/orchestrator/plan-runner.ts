@@ -1,16 +1,29 @@
+import fs from "fs";
+import path from "path";
+import { UPLOADS_DIR } from "../db";
 import { getProvider } from "../integrations";
 import {
+  addAttachment,
   getPlan,
   getPlanWithSteps,
+  listAttachments,
   listPlans,
   listSteps,
   updatePlan,
   updateStep,
   upsertStepTask,
 } from "../plan-repo";
-import { getIntegration, getProject, getTask, listRuns } from "../repo";
+import {
+  getIntegration,
+  getProject,
+  getTask,
+  listRuns,
+  setTaskStatus,
+} from "../repo";
 import { truncate } from "../integrations/provider";
 import type { Plan, PlanStep, Project } from "../types";
+import { buildAttachmentBlock } from "./run-config";
+import { stopRun } from "./runner";
 
 // planTick runs from the scheduler loop; guard against overlap.
 const g = globalThis as unknown as { __leoPlanTicking?: boolean };
@@ -132,6 +145,192 @@ export async function pushPlanToClickUp(
   };
 }
 
+const IMG_EXT = new Set(["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "avif"]);
+
+async function downloadAttachment(
+  url: string,
+  token: string,
+): Promise<Buffer | null> {
+  try {
+    let res = await fetch(url);
+    if (!res.ok) res = await fetch(url, { headers: { Authorization: token } });
+    if (!res.ok) return null;
+    return Buffer.from(await res.arrayBuffer());
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Import the image attachments of the plan's origin ClickUp task as plan
+ * attachments (downloaded locally so Claude can Read them and they show in the
+ * UI). Idempotent: skips images already imported (by filename).
+ */
+export async function importClickupAttachments(
+  planId: number,
+): Promise<{ ok: boolean; imported: number; message: string }> {
+  const plan = await getPlan(planId);
+  if (!plan) return { ok: false, imported: 0, message: "Plan no encontrado" };
+  if (
+    plan.source_type !== "clickup" ||
+    !plan.source_external_id ||
+    !plan.source_integration_id
+  ) {
+    return { ok: false, imported: 0, message: "El plan no viene de una tarea ClickUp." };
+  }
+  const integ = await getIntegration(plan.source_integration_id);
+  const provider = integ ? getProvider(integ.type) : null;
+  if (!integ || !provider?.fetchAttachments) {
+    return { ok: false, imported: 0, message: "Proveedor ClickUp incompleto." };
+  }
+  const config = integ.config as unknown as Record<string, unknown>;
+  const token = (config as { token?: string }).token ?? "";
+
+  const atts = await provider.fetchAttachments(config, plan.source_external_id);
+  const images = atts.filter(
+    (a) => IMG_EXT.has(a.extension) || a.mimetype.startsWith("image/"),
+  );
+
+  // Also pull images embedded inline in the description (pasted screenshots,
+  // markdown image links) — these aren't in the attachments array.
+  if (provider.getTaskDescription) {
+    const md = await provider
+      .getTaskDescription(config, plan.source_external_id)
+      .catch(() => "");
+    const seen = new Set(images.map((i) => i.url));
+    const re = /!\[[^\]]*\]\(([^)\s]+)\)/g;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(md)) !== null) {
+      const url = m[1];
+      if (seen.has(url)) continue;
+      const clean = url.split("?")[0];
+      const ext = (clean.split(".").pop() ?? "").toLowerCase();
+      if (IMG_EXT.has(ext) || /clickup|attachment/i.test(url)) {
+        const name = decodeURIComponent(clean.split("/").pop() ?? `img.${ext || "png"}`);
+        images.push({
+          title: name,
+          extension: IMG_EXT.has(ext) ? ext : "png",
+          url,
+          mimetype: "",
+        });
+        seen.add(url);
+      }
+    }
+  }
+  if (!images.length) {
+    return { ok: true, imported: 0, message: "La tarea de ClickUp no tiene imágenes adjuntas." };
+  }
+  const existing = new Set((await listAttachments(planId)).map((a) => a.filename));
+  const dir = path.join(UPLOADS_DIR, `plan-${planId}`);
+  fs.mkdirSync(dir, { recursive: true });
+
+  let imported = 0;
+  for (const img of images) {
+    const fname = img.title || `clickup.${img.extension || "png"}`;
+    if (existing.has(fname)) continue;
+    const buf = await downloadAttachment(img.url, token);
+    if (!buf) continue;
+    const safe = fname.replace(/[^a-zA-Z0-9._-]/g, "_").slice(0, 120) || "img";
+    const abs = path.join(dir, `${imported}-${safe}`);
+    try {
+      fs.writeFileSync(abs, buf);
+      await addAttachment({
+        plan_id: planId,
+        filename: fname,
+        path: abs,
+        mime: img.mimetype || `image/${img.extension || "png"}`,
+        size: buf.length,
+      });
+      imported++;
+    } catch {
+      /* skip this one */
+    }
+  }
+  return {
+    ok: true,
+    imported,
+    message: imported
+      ? `Importadas ${imported} imagen(es) de ClickUp.`
+      : "No se importaron imágenes nuevas (ya estaban o no se pudieron descargar).",
+  };
+}
+
+const SYNC_MARKER = "## 🦁 Requerimiento refinado por Leo";
+
+/**
+ * Write the refined requirement (+ step list) back into the parent ClickUp
+ * task's description. Non-destructive: the user's original text is preserved
+ * and the Leo block is replaced in place on re-sync. Also drops a comment.
+ */
+export async function syncPlanToClickUp(
+  planId: number,
+): Promise<{ ok: boolean; message: string }> {
+  const plan = await getPlanWithSteps(planId);
+  if (!plan) return { ok: false, message: "Plan no encontrado" };
+  if (!plan.refined_spec.trim() && plan.steps.length === 0) {
+    return { ok: false, message: "Refina el plan antes de sincronizar." };
+  }
+  const project = await getProject(plan.project_id);
+  if (!project) return { ok: false, message: "Proyecto no encontrado" };
+
+  const cu = await resolveClickUp(plan, project);
+  if (!cu) {
+    return {
+      ok: false,
+      message: "El proyecto no tiene una fuente ClickUp configurada.",
+    };
+  }
+  const provider = getProvider("clickup");
+  if (!provider.updateTaskDescription || !provider.getTaskDescription) {
+    return { ok: false, message: "Proveedor ClickUp incompleto." };
+  }
+
+  const taskId =
+    plan.source_type === "clickup" && plan.source_external_id
+      ? plan.source_external_id
+      : plan.clickup_parent_id;
+  if (!taskId) {
+    return {
+      ok: false,
+      message:
+        "No hay tarea ClickUp destino. Crea las subtasks primero o parte de una tarea ClickUp.",
+    };
+  }
+
+  const current = await provider.getTaskDescription(cu.config, taskId);
+  const base = current
+    .split(SYNC_MARKER)[0]
+    .replace(/\n*-{3,}\s*$/, "")
+    .trimEnd();
+  const stepsList = plan.steps
+    .map((s, i) => {
+      const first = s.spec.split("\n")[0].trim();
+      return `${i + 1}. **${s.title}**${first ? ` — ${first}` : ""}`;
+    })
+    .join("\n");
+  const refined = `${SYNC_MARKER}\n\n${plan.refined_spec.trim()}${
+    stepsList ? `\n\n### Pasos (${plan.steps.length})\n${stepsList}` : ""
+  }`;
+  const newDesc = base ? `${base}\n\n---\n\n${refined}` : refined;
+
+  const r = await provider.updateTaskDescription(cu.config, taskId, newDesc);
+  if (r.ok && provider.addComment) {
+    await provider
+      .addComment(
+        cu.config,
+        taskId,
+        `🦁 Leo sincronizó el requerimiento refinado (${plan.steps.length} pasos) en la descripción.`,
+      )
+      .catch(() => {});
+  }
+  return {
+    ok: r.ok,
+    message: r.ok
+      ? "Requerimiento refinado sincronizado en la tarea ClickUp."
+      : r.message,
+  };
+}
+
 /** Move a plan into the orchestration queue. Resets non-done steps to pending. */
 export async function enqueuePlan(
   planId: number,
@@ -157,15 +356,100 @@ export async function enqueuePlan(
   });
 }
 
+/**
+ * Stop orchestrating a plan and return it to the editable 'refined' state:
+ * stop any in-flight step run, reset non-done steps to pending, clear schedule.
+ */
 export async function cancelPlan(planId: number): Promise<Plan | null> {
   const plan = await getPlanWithSteps(planId);
   if (!plan) return null;
   for (const s of plan.steps) {
-    if (s.status === "pending" || s.status === "queued") {
-      await updateStep(s.id, { status: "skipped" });
+    if (s.status === "running" && s.task_id) {
+      try {
+        const runs = await listRuns({
+          task_id: s.task_id,
+          status: "running",
+          limit: 1,
+        });
+        if (runs[0]) stopRun(runs[0].id);
+        await setTaskStatus(s.task_id, "cancelled");
+      } catch {
+        /* best-effort */
+      }
+    }
+    if (s.status !== "done") {
+      await updateStep(s.id, { status: "pending", task_id: null });
     }
   }
-  return updatePlan(planId, { status: "cancelled" });
+  const hasSteps = plan.steps.length > 0;
+  return updatePlan(planId, {
+    status: hasSteps ? "refined" : "draft",
+    scheduled_for: null,
+    error: null,
+  });
+}
+
+/** The ClickUp status that this project's *development* source listens to. */
+export function resolveDevStatus(project: Project): string | null {
+  const clickup = project.sources.filter((s) => s.type === "clickup");
+  const dev =
+    clickup.find((s) => s.role === "development") ??
+    clickup.find((s) => s.role === "both") ??
+    clickup.find((s) => !s.role || s.role === undefined);
+  const statuses = dev?.filter.statuses;
+  if (Array.isArray(statuses) && statuses.length) return String(statuses[0]);
+  return null;
+}
+
+/**
+ * Move the plan's origin ClickUp task to the development status, so the dev
+ * poller picks it up and the natural development flow takes over.
+ */
+export async function movePlanToDevStatus(
+  planId: number,
+): Promise<{ ok: boolean; message: string; status?: string }> {
+  const plan = await getPlanWithSteps(planId);
+  if (!plan) return { ok: false, message: "Plan no encontrado" };
+  const project = await getProject(plan.project_id);
+  if (!project) return { ok: false, message: "Proyecto no encontrado" };
+
+  const taskId =
+    plan.source_type === "clickup" && plan.source_external_id
+      ? plan.source_external_id
+      : plan.clickup_parent_id;
+  if (!taskId) {
+    return {
+      ok: false,
+      message: "El plan no viene de una tarea ClickUp (ni tiene padre creado).",
+    };
+  }
+  const devStatus = resolveDevStatus(project);
+  if (!devStatus) {
+    return {
+      ok: false,
+      message:
+        "No hay una fuente ClickUp de *desarrollo* con un estado configurado en el proyecto.",
+    };
+  }
+  const cu = await resolveClickUp(plan, project);
+  if (!cu) return { ok: false, message: "Sin configuración ClickUp." };
+
+  const provider = getProvider("clickup");
+  if (!provider.resolveTask) {
+    return { ok: false, message: "Proveedor ClickUp incompleto." };
+  }
+  const r = await provider.resolveTask(cu.config, taskId, { status: devStatus });
+  if (r.ok) {
+    // Refinement is done — the plan is now handed off to the ClickUp dev flow.
+    await updatePlan(planId, { status: "dispatched", error: null });
+  }
+  return {
+    ok: r.ok,
+    status: devStatus,
+    message: r.ok
+      ? `Tarea movida a "${devStatus}". Refinamiento cerrado — lo ejecuta desarrollo desde ClickUp.`
+      : r.message,
+  };
 }
 
 /** Cumulative context handed to a step: refined spec + prior step summaries. */
@@ -213,7 +497,8 @@ async function dispatchStep(
   allSteps: PlanStep[],
 ): Promise<void> {
   const context = buildStepContext(plan, step, allSteps);
-  const description = `${step.spec.trim()}\n\n${context}`;
+  const attBlock = buildAttachmentBlock(await listAttachments(plan.id));
+  const description = `${step.spec.trim()}\n\n${context}${attBlock ? `\n\n${attBlock}` : ""}`;
 
   let taskId: number;
   if (step.clickup_task_id) {

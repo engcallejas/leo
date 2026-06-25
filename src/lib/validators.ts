@@ -11,6 +11,22 @@ export const projectSourceSchema = z.object({
   integration_id: z.number().int(),
   type: z.enum(["sentry", "clickup"]),
   filter: z.record(z.string(), z.unknown()),
+  role: z.enum(["development", "planning", "both"]).optional(),
+});
+
+export const mcpServerSchema = z.object({
+  name: z
+    .string()
+    .min(1)
+    .regex(/^[a-zA-Z0-9_-]+$/, "Solo letras, números, guion y guion bajo"),
+  transport: z.enum(["stdio", "http", "sse"]),
+  command: z.string().optional(),
+  args: z.array(z.string()).optional(),
+  env: z.record(z.string(), z.string()).optional(),
+  url: z.string().optional(),
+  headers: z.record(z.string(), z.string()).optional(),
+  planning: z.boolean(),
+  development: z.boolean(),
 });
 
 export const projectInputSchema = z.object({
@@ -29,6 +45,11 @@ export const projectInputSchema = z.object({
   enabled: z.boolean().optional(),
   resolve_source_on_done: z.boolean().optional(),
   auth_method: z.enum(["inherit", "subscription", "api-key"]).optional(),
+  mcp_servers: z.array(mcpServerSchema).optional(),
+  strict_mcp: z.boolean().optional(),
+  hooks: z.string().optional(),
+  spec_globs: z.string().optional(),
+  interactive: z.boolean().optional(),
 });
 
 export const integrationInputSchema = z.object({

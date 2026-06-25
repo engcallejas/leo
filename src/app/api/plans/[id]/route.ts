@@ -42,14 +42,17 @@ export async function PUT(req: Request, { params }: Ctx) {
         spec: s.spec ?? "",
       })));
     }
+    // Promote draft/failed → refined only when there are actually steps to run
+    // (saving an empty step list must not pretend the plan is refined).
+    const promote =
+      !!body.steps &&
+      body.steps.length > 0 &&
+      (plan.status === "draft" || plan.status === "failed");
     await updatePlan(planId, {
       title: body.title,
       objective: body.objective,
       refined_spec: body.refined_spec,
-      // Editing a draft/refined plan keeps it in the 'refined' lane.
-      ...(body.steps && (plan.status === "draft" || plan.status === "failed")
-        ? { status: "refined" as const }
-        : {}),
+      ...(promote ? { status: "refined" as const, error: null } : {}),
     });
     return json(await getPlanWithSteps(planId));
   } catch (e) {

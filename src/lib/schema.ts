@@ -35,6 +35,11 @@ CREATE TABLE IF NOT EXISTS projects (
   enabled          INTEGER NOT NULL DEFAULT 1,
   resolve_source_on_done INTEGER NOT NULL DEFAULT 1,
   auth_method      TEXT NOT NULL DEFAULT 'inherit',
+  mcp_servers      TEXT NOT NULL DEFAULT '[]',
+  strict_mcp       INTEGER NOT NULL DEFAULT 0,
+  hooks            TEXT NOT NULL DEFAULT '',
+  spec_globs       TEXT NOT NULL DEFAULT '',
+  interactive      INTEGER NOT NULL DEFAULT 0,
   created_at       TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at       TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -51,6 +56,9 @@ CREATE TABLE IF NOT EXISTS tasks (
   raw            TEXT,
   status         TEXT NOT NULL DEFAULT 'pending',
   scheduled_for  TEXT,
+  source_role    TEXT NOT NULL DEFAULT 'development',
+  parent_task_id INTEGER,
+  chain_branch   TEXT,
   created_at     TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at     TEXT NOT NULL DEFAULT (datetime('now')),
   UNIQUE(project_id, source_type, external_id)
@@ -118,4 +126,32 @@ CREATE TABLE IF NOT EXISTS plan_steps (
 );
 
 CREATE INDEX IF NOT EXISTS idx_plan_steps_plan ON plan_steps(plan_id);
+
+CREATE TABLE IF NOT EXISTS plan_attachments (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  plan_id     INTEGER NOT NULL REFERENCES plans(id) ON DELETE CASCADE,
+  filename    TEXT NOT NULL,
+  path        TEXT NOT NULL,
+  mime        TEXT NOT NULL DEFAULT '',
+  size        INTEGER NOT NULL DEFAULT 0,
+  created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_plan_attachments_plan ON plan_attachments(plan_id);
+
+CREATE TABLE IF NOT EXISTS run_interactions (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  run_id      INTEGER NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+  task_id     INTEGER,
+  kind        TEXT NOT NULL DEFAULT 'question',
+  question    TEXT NOT NULL,
+  options     TEXT NOT NULL DEFAULT '[]',
+  status      TEXT NOT NULL DEFAULT 'pending',
+  answer      TEXT,
+  created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+  answered_at TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_interactions_run ON run_interactions(run_id);
+CREATE INDEX IF NOT EXISTS idx_interactions_status ON run_interactions(status);
 `;

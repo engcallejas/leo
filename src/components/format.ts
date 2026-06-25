@@ -48,6 +48,7 @@ const PLAN_LABELS: Record<string, string> = {
   refined: "Refinado",
   queued: "En cola",
   running: "Ejecutando",
+  dispatched: "En desarrollo (ClickUp)",
   done: "Completado",
   failed: "Falló",
   cancelled: "Cancelado",
@@ -75,6 +76,7 @@ export function planStatusBadgeClass(s: string): string {
       return "badge badge-danger badge-dot";
     case "running":
     case "refining":
+    case "dispatched":
       return "badge badge-running badge-dot";
     case "queued":
     case "refined":

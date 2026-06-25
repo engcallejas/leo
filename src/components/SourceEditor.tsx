@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { api } from "@/components/client";
 import { Field } from "@/components/ui";
-import type { Integration, ProjectSource } from "@/lib/types";
+import type { Integration, ProjectSource, SourceRole } from "@/lib/types";
 
 type Meta =
   | { type: "clickup"; lists: { id: string; name: string; path: string }[] }
@@ -85,7 +85,7 @@ export function SourceEditor({
     loadOpts(first.id);
     onChange([
       ...sources,
-      { integration_id: first.id, type: first.type, filter: {} },
+      { integration_id: first.id, type: first.type, filter: {}, role: "development" },
     ]);
   };
 
@@ -108,6 +108,12 @@ export function SourceEditor({
         >
           + Agregar fuente
         </button>
+      </div>
+      <div className="hint" style={{ marginBottom: 8 }}>
+        El <b>rol</b> define qué hace cada lista: <b>Desarrollo</b> alimenta el
+        auto-run; <b>Planeación</b> solo aparece en el selector de planes (no se
+        ejecuta sola); <b>Ambos</b>, las dos cosas. Puedes mezclar varias listas
+        de planning distintas a las de desarrollo.
       </div>
       {integrations.length === 0 && (
         <div className="hint">
@@ -153,6 +159,17 @@ export function SourceEditor({
                     {it.name} ({it.type})
                   </option>
                 ))}
+              </select>
+              <select
+                className="select"
+                title="Rol de esta fuente"
+                value={src.role ?? "development"}
+                onChange={(e) => update(i, { role: e.target.value as SourceRole })}
+                style={{ width: 150 }}
+              >
+                <option value="development">Desarrollo</option>
+                <option value="planning">Planeación</option>
+                <option value="both">Ambos</option>
               </select>
               <button
                 type="button"

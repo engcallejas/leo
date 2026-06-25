@@ -12,6 +12,9 @@ import {
   timeAgo,
 } from "@/components/format";
 import { ErrorBar } from "@/components/ui";
+import { PlanAttachments } from "@/components/PlanAttachments";
+import { RefineProgress } from "@/components/RefineProgress";
+import { SpecViewer } from "@/components/SpecViewer";
 import type { PlanStep, PlanWithSteps } from "@/lib/types";
 
 const LIVE = new Set(["refining", "queued", "running"]);
@@ -26,6 +29,7 @@ export default function PlanDetailPage() {
   const [msg, setMsg] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [when, setWhen] = useState("");
+  const [devStatus, setDevStatus] = useState<string | null>(null);
   const dirty = useRef(false);
 
   const load = useCallback(async () => {
@@ -36,6 +40,16 @@ export default function PlanDetailPage() {
   useEffect(() => {
     load().catch((e) => setErr((e as Error).message));
   }, [load]);
+
+  // Resolve the project's development ClickUp status (for the "move to" button).
+  const projectId = plan?.project_id;
+  useEffect(() => {
+    if (!projectId) return;
+    api
+      .get(`/api/projects/${projectId}`)
+      .then((p) => setDevStatus(devStatusOf(p)))
+      .catch(() => {});
+  }, [projectId]);
 
   // Live-poll while the plan is refining / queued / running, unless the user is
   // mid-edit (don't clobber their text).
@@ -62,7 +76,8 @@ export default function PlanDetailPage() {
 
   const active = plan.status === "running" || plan.status === "queued";
   const refining = plan.status === "refining";
-  const locked = active || refining;
+  const dispatched = plan.status === "dispatched";
+  const locked = active || refining || dispatched;
 
   const patch = (p: Partial<PlanWithSteps>) => {
     dirty.current = true;
@@ -139,6 +154,20 @@ export default function PlanDetailPage() {
       setMsg(r.message || "Listo.");
     });
 
+  const syncClickup = () =>
+    act("sync", async () => {
+      const r = await api.post(`/api/plans/${id}/sync-clickup`);
+      if (r.plan) setPlan(r.plan);
+      setMsg(r.message || "Listo.");
+    });
+
+  const moveToDev = () =>
+    act("movedev", async () => {
+      const r = await api.post(`/api/plans/${id}/move-to-dev`);
+      if (r.plan) setPlan(r.plan);
+      setMsg(r.message || "Listo.");
+    });
+
   const enqueue = (scheduledFor: string | null) =>
     act("enqueue", async () => {
       if (dirty.current) await save();
@@ -185,6 +214,24 @@ export default function PlanDetailPage() {
           </div>
         }
       />
+
+      <PhaseGuide status={plan.status} hasSteps={plan.steps.length > 0} />
+
+      {dispatched && (
+        <div
+          className="card"
+          style={{
+            padding: "11px 14px",
+            marginBottom: 14,
+            fontSize: 13,
+            border: "1px solid var(--running, #5b6cff)",
+          }}
+        >
+          🚀 Refinamiento cerrado. Este plan se movió
+          {devStatus ? ` a "${devStatus}"` : ""} y lo ejecuta <b>desarrollo</b>{" "}
+          desde ClickUp. Usa “↺ Volver a refinado” si necesitas retomarlo en Leo.
+        </div>
+      )}
 
       {err && <ErrorBar text={err} />}
       {msg && (
@@ -239,13 +286,51 @@ export default function PlanDetailPage() {
         >
           {busy === "clickup" ? "Enviando…" : "⇪ Crear subtasks ClickUp"}
         </button>
+        <button
+          className="btn"
+          onClick={syncClickup}
+          disabled={!!busy || !plan.refined_spec.trim() || locked}
+          title="Escribe el requerimiento refinado (y los pasos) en la descripción de la tarea ClickUp"
+        >
+          {busy === "sync" ? "Sincronizando…" : "⟳ Sincronizar a ClickUp"}
+        </button>
+        {plan.source_type === "clickup" && devStatus && (
+          <button
+            className="btn"
+            onClick={moveToDev}
+            disabled={!!busy || locked}
+            title={`Mueve la tarea de ClickUp al estado "${devStatus}" que escucha desarrollo, para entrar al flujo natural`}
+          >
+            {busy === "movedev" ? "Moviendo…" : `→ Mover a "${devStatus}"`}
+          </button>
+        )}
         <div style={{ flex: 1 }} />
         {active ? (
           <button className="btn btn-danger" onClick={cancel} disabled={!!busy}>
-            Cancelar ejecución
+            {busy === "cancel" ? "Deteniendo…" : "Detener y volver a refinado"}
+          </button>
+        ) : dispatched ? (
+          <button
+            className="btn"
+            onClick={cancel}
+            disabled={!!busy}
+            title="Deshacer el handoff y volver al estado refinado (editable)"
+          >
+            {busy === "cancel" ? "…" : "↺ Volver a refinado"}
           </button>
         ) : (
           <>
+            {(plan.status === "failed" || plan.status === "cancelled") &&
+              plan.steps.length > 0 && (
+                <button
+                  className="btn"
+                  onClick={cancel}
+                  disabled={!!busy}
+                  title="Resetea los pasos y vuelve al estado refinado (editable)"
+                >
+                  {busy === "cancel" ? "…" : "↺ Volver a refinado"}
+                </button>
+              )}
             <input
               type="datetime-local"
               className="input"
@@ -274,6 +359,8 @@ export default function PlanDetailPage() {
           </>
         )}
       </div>
+
+      <RefineProgress planId={plan.id} refining={refining} />
 
       {/* Objective + refined spec */}
       <div className="card" style={{ padding: 18, marginBottom: 16, display: "grid", gap: 14 }}>
@@ -316,6 +403,10 @@ export default function PlanDetailPage() {
           />
         </div>
       </div>
+
+      <PlanAttachments planId={plan.id} clickupOrigin={plan.source_type === "clickup"} />
+
+      <SpecViewer projectId={plan.project_id} />
 
       {/* Steps */}
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
@@ -374,6 +465,7 @@ export default function PlanDetailPage() {
                     className="btn btn-sm btn-danger"
                     onClick={() => removeStep(s.id)}
                     disabled={!!busy}
+                    title="Eliminar paso"
                   >
                     ✕
                   </button>
@@ -422,6 +514,88 @@ export default function PlanDetailPage() {
           Eliminar plan
         </button>
       </div>
+    </div>
+  );
+}
+
+/** The project's development ClickUp status (first status of its dev source). */
+function devStatusOf(project: {
+  sources?: { type: string; role?: string; filter: Record<string, unknown> }[];
+}): string | null {
+  const clickup = (project.sources ?? []).filter((s) => s.type === "clickup");
+  const dev =
+    clickup.find((s) => s.role === "development") ??
+    clickup.find((s) => s.role === "both") ??
+    clickup.find((s) => !s.role);
+  const st = dev?.filter?.statuses;
+  return Array.isArray(st) && st.length ? String(st[0]) : null;
+}
+
+/** Numbered guide that highlights the current phase of the plan. */
+function PhaseGuide({ status, hasSteps }: { status: string; hasSteps: boolean }) {
+  // Which phase index (0-3) is "current".
+  let current = 0;
+  if (status === "refining") current = 0;
+  else if (status === "refined" || (status === "failed" && hasSteps)) current = 1;
+  else if (status === "queued" || status === "running") current = 3;
+  else if (status === "done") current = 4;
+  else current = 0; // draft / failed without steps
+
+  const phases = [
+    { t: "Refinar", d: "Claude analiza el repo y propone spec + pasos." },
+    { t: "Revisar y editar", d: "Ajusta el spec y los pasos a mano." },
+    { t: "Subtasks ClickUp (opcional)", d: "Crea cada paso como subtask." },
+    { t: "Encolar / Programar", d: "Ejecuta los pasos en orden." },
+  ];
+
+  return (
+    <div
+      className="card"
+      style={{ padding: 12, marginBottom: 16, display: "flex", gap: 8, flexWrap: "wrap" }}
+    >
+      {phases.map((p, i) => {
+        const state = i < current ? "done" : i === current ? "active" : "todo";
+        return (
+          <div
+            key={i}
+            style={{
+              flex: "1 1 160px",
+              padding: "8px 10px",
+              borderRadius: 8,
+              border: "1px solid var(--border)",
+              background:
+                state === "active" ? "var(--panel-2)" : "transparent",
+              opacity: state === "todo" ? 0.55 : 1,
+            }}
+          >
+            <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12.5, fontWeight: 600 }}>
+              <span
+                style={{
+                  width: 18,
+                  height: 18,
+                  borderRadius: 999,
+                  display: "grid",
+                  placeItems: "center",
+                  fontSize: 11,
+                  background:
+                    state === "done"
+                      ? "var(--ok)"
+                      : state === "active"
+                        ? "var(--accent)"
+                        : "var(--border)",
+                  color: state === "todo" ? "var(--muted)" : "var(--accent-fg, #000)",
+                }}
+              >
+                {state === "done" ? "✓" : i + 1}
+              </span>
+              {p.t}
+            </div>
+            <div className="muted" style={{ fontSize: 11, marginTop: 4 }}>
+              {p.d}
+            </div>
+          </div>
+        );
+      })}
     </div>
   );
 }

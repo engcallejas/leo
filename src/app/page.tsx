@@ -43,8 +43,13 @@ export default function DashboardPage() {
   const projName = (id: number) =>
     projects.find((p) => p.id === id)?.name ?? `#${id}`;
 
+  // The execution queue only shows tasks meant to run: development/both sources
+  // and manual tasks. Planning-only tasks live in the plan picker, not here.
   const pending = tasks.filter(
-    (t) => t.status === "pending" || t.status === "queued",
+    (t) =>
+      (t.status === "pending" || t.status === "queued") &&
+      t.source_role !== "planning" &&
+      !t.parent_task_id, // chain subtasks are managed by their parent
   );
 
   const pollNow = async () => {
@@ -301,6 +306,19 @@ function QueueItem({
       setBusy(false);
     }
   };
+  const discard = async () => {
+    if (!confirm(`¿Descartar "${task.title}"? No se ejecutará ni se volverá a traer.`))
+      return;
+    setBusy(true);
+    try {
+      await api.post(`/api/tasks/${task.id}/skip`);
+      onChanged("Descartada");
+    } catch (e) {
+      onChanged((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
 
   return (
     <div style={{ padding: "9px 10px", borderBottom: "1px solid var(--border)" }}>
@@ -339,6 +357,14 @@ function QueueItem({
           </button>
           <button className="btn btn-sm" onClick={queue} disabled={busy}>
             Encolar
+          </button>
+          <button
+            className="btn btn-sm btn-danger"
+            onClick={discard}
+            disabled={busy}
+            title="Descartar: no se ejecuta ni se vuelve a traer"
+          >
+            ✕
           </button>
         </div>
       </div>

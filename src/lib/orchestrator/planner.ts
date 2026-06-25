@@ -8,10 +8,18 @@ import {
 } from "../claude-auth";
 import { LOGS_DIR } from "../db";
 import { getProvider } from "../integrations";
-import { getPlan, listPlans, replaceSteps, updatePlan } from "../plan-repo";
+import {
+  getPlan,
+  listAttachments,
+  listPlans,
+  replaceSteps,
+  updatePlan,
+} from "../plan-repo";
 import { getIntegration, getProject } from "../repo";
 import { getSettings } from "../settings";
+import { buildSpecContext } from "../specs";
 import type { Plan, Project, RefineResult } from "../types";
+import { buildAttachmentBlock, buildRunExtras } from "./run-config";
 
 // Refinement runs are spawned DETACHED and stream stream-json to a log file, so
 // they survive a Leo restart (same pattern as task runs). We track them by pid
@@ -75,6 +83,8 @@ function buildRefinePrompt(
   project: Project,
   plan: Plan,
   seedContext: string,
+  specContext: string,
+  attachmentBlock: string,
 ): string {
   const sourceLabel =
     plan.source_type === "manual"
@@ -101,12 +111,23 @@ function buildRefinePrompt(
     );
   }
 
+  if (specContext.trim()) {
+    sections.push(`\n${specContext.trim()}`);
+  }
+
+  if (attachmentBlock.trim()) {
+    sections.push(`\n${attachmentBlock.trim()}`);
+  }
+
   sections.push(
     `\n## Your job`,
-    `1. Investigate the relevant parts of the codebase to ground the work in reality (which files/modules change, existing patterns, the validations that must pass).`,
+    `1. Investigate the relevant parts of the codebase to ground the work in reality (which files/modules change, existing patterns, the validations that must pass). Be EFFICIENT: read only the few files you actually need; do NOT exhaustively read tests or unrelated modules. As soon as you understand the change, STOP reading and output the plan — you have a limited number of steps.`,
     `2. Produce a precise, unambiguous refined requirement that removes guesswork for the implementing agent.`,
-    `3. Break it into an ORDERED list of independently-executable steps (subtasks). Each step is a self-contained unit a coding agent completes in one session; later steps may build on earlier ones. Prefer 2–6 steps unless the work is trivial (then 1) or genuinely large.`,
-    `   For each step give a short imperative title and a DETAILED spec: what to change, where (files/modules), acceptance criteria, and which validations/tests to run.`,
+    `3. Decide the MINIMUM number of steps. DEFAULT TO A SINGLE STEP. Most tasks are one step.`,
+    `   Only split into multiple steps when the work is genuinely large and made of independent units of FEATURE work that each deserve their own session and Pull Request (e.g. a backend change that can ship separately from a later frontend change). When unsure, use ONE step.`,
+    `   CRITICAL — never create separate steps for: writing tests, running validations/linters, type-checking, committing, pushing, code review, or opening the PR. Those are part of FINISHING EVERY step — the executing agent always runs this project's validations and finalization contract on each step. So a normal change (e.g. "embed a responsive video on a page", "fix a bug", "add a field") is exactly ONE step that already includes its tests, validations, commit and PR.`,
+    `   A step must be a meaningful, independently-shippable slice of the feature — never a phase ("implement", then "test", then "validate", then "commit") of the same change. If your steps would each touch the same change or only differ by lifecycle phase, collapse them into one.`,
+    `   For each step give a short imperative title and a DETAILED spec: what to change, where (files/modules), and acceptance criteria.`,
     `\n## Output format (REQUIRED)`,
     `When your analysis is complete, end your message with a SINGLE fenced json code block and nothing after it:`,
     "```json",
@@ -127,6 +148,8 @@ function buildRefineArgs(
   project: Project,
   prompt: string,
   model: string | null,
+  allowedMcpTools: string[],
+  extraArgs: string[],
 ): string[] {
   const args = [
     "-p",
@@ -141,41 +164,81 @@ function buildRefineArgs(
     "--disallowedTools",
     "Edit,MultiEdit,Write,NotebookEdit,Bash",
     "--max-turns",
-    "40",
+    "60",
   ];
+  // Pre-approve the planning MCP tools so they don't prompt (read tools are
+  // already auto-allowed; this only adds the MCP servers).
+  if (allowedMcpTools.length) {
+    args.push("--allowedTools", allowedMcpTools.join(","));
+  }
   if (model && model.trim()) args.push("--model", model.trim());
+  args.push(...extraArgs);
   args.push("--add-dir", project.repo_path);
   return args;
 }
 
-/** Extract the last fenced ```json block (or last balanced object) from text. */
+/**
+ * Extract the balanced JSON object starting at `from`, respecting string
+ * literals (so ``` code fences or braces inside string values don't confuse
+ * the scan). Returns the substring from the first `{` to its matching `}`.
+ */
+function extractBalanced(text: string, from: number): string | null {
+  const start = text.indexOf("{", from);
+  if (start < 0) return null;
+  let depth = 0;
+  let inStr = false;
+  let esc = false;
+  for (let i = start; i < text.length; i++) {
+    const ch = text[i];
+    if (inStr) {
+      if (esc) esc = false;
+      else if (ch === "\\") esc = true;
+      else if (ch === '"') inStr = false;
+      continue;
+    }
+    if (ch === '"') inStr = true;
+    else if (ch === "{") depth++;
+    else if (ch === "}") {
+      depth--;
+      if (depth === 0) return text.slice(start, i + 1);
+    }
+  }
+  return null;
+}
+
+/** Extract the structured plan JSON from the model's free-text result. */
 export function extractRefineJson(text: string): RefineResult | null {
   if (!text) return null;
   const candidates: string[] = [];
+
+  // 1) Balanced object after a ```json marker (robust to internal code fences).
+  const marker = text.indexOf("```json");
+  const balanced =
+    extractBalanced(text, marker >= 0 ? marker + 7 : 0) ??
+    extractBalanced(text, 0);
+  if (balanced) candidates.push(balanced);
+
+  // 2) ```json fenced content (may be truncated by internal fences — try anyway).
   const fence = /```json\s*([\s\S]*?)```/gi;
   let m: RegExpExecArray | null;
   while ((m = fence.exec(text)) !== null) candidates.push(m[1]);
-  // Fallback: any fenced block, then a raw balanced object.
-  if (candidates.length === 0) {
-    const anyFence = /```\s*([\s\S]*?)```/gi;
-    while ((m = anyFence.exec(text)) !== null) candidates.push(m[1]);
-  }
-  if (candidates.length === 0) {
-    const start = text.indexOf("{");
-    const end = text.lastIndexOf("}");
-    if (start >= 0 && end > start) candidates.push(text.slice(start, end + 1));
-  }
-  for (let i = candidates.length - 1; i >= 0; i--) {
+
+  // 3) Last resort: first '{' to last '}'.
+  const s = text.indexOf("{");
+  const e = text.lastIndexOf("}");
+  if (s >= 0 && e > s) candidates.push(text.slice(s, e + 1));
+
+  for (const c of candidates) {
     try {
-      const obj = JSON.parse(candidates[i].trim()) as Partial<RefineResult>;
+      const obj = JSON.parse(c.trim()) as Partial<RefineResult>;
       if (obj && Array.isArray(obj.steps)) {
         return {
           title: typeof obj.title === "string" ? obj.title : undefined,
           refined_spec:
             typeof obj.refined_spec === "string" ? obj.refined_spec : "",
           steps: obj.steps
-            .filter((s) => s && typeof s.title === "string")
-            .map((s) => ({ title: s.title, spec: String(s.spec ?? "") })),
+            .filter((st) => st && typeof st.title === "string")
+            .map((st) => ({ title: st.title, spec: String(st.spec ?? "") })),
         };
       }
     } catch {
@@ -219,14 +282,19 @@ async function finalizeRefinement(planId: number, logPath: string): Promise<void
 
   if (!parsed || parsed.steps.length === 0) {
     appendLine(logPath, { type: "leo_refine_error" });
-    await updatePlan(planId, {
-      status: "failed",
-      refine_pid: null,
-      error:
-        result?.is_error === true
-          ? "El refinamiento terminó con error (revisa el log)."
-          : "No se pudo extraer un plan estructurado del resultado del refinamiento.",
-    });
+    // Distinguish: no result event at all (process interrupted / hit the turn
+    // or rate limit) vs. a result that didn't carry the expected JSON.
+    let error: string;
+    if (!result) {
+      error =
+        "El refinamiento se interrumpió antes de terminar (probable límite de turnos o rate limit de Claude en un repo grande). Pulsa “Refinar” de nuevo para reintentar.";
+    } else if (result.is_error === true) {
+      error = "El refinamiento terminó con error (revisa el análisis). Pulsa “Refinar” de nuevo.";
+    } else {
+      error =
+        "Claude no devolvió el plan en el formato esperado. Pulsa “Refinar” de nuevo para reintentar.";
+    }
+    await updatePlan(planId, { status: "failed", refine_pid: null, error });
     refinePids.delete(planId);
     refineWatched.delete(planId);
     return;
@@ -286,8 +354,27 @@ export async function startRefinement(planId: number): Promise<Plan> {
   const settings = await getSettings();
   const exec = await resolveProjectExec(project);
   const seedContext = await fetchSeedContext(plan);
-  const prompt = buildRefinePrompt(project, plan, seedContext);
-  const args = buildRefineArgs(project, prompt, exec.model);
+  const specContext = buildSpecContext(project, true);
+  const attachmentBlock = buildAttachmentBlock(await listAttachments(planId));
+  const prompt = buildRefinePrompt(
+    project,
+    plan,
+    seedContext,
+    specContext,
+    attachmentBlock,
+  );
+  const extras = buildRunExtras({
+    project,
+    scope: "planning",
+    baseName: `plan-refine-${planId}`,
+  });
+  const args = buildRefineArgs(
+    project,
+    prompt,
+    exec.model,
+    extras.allowedMcpTools,
+    extras.args,
+  );
 
   const logPath = path.join(LOGS_DIR, `plan-refine-${planId}.jsonl`);
   fs.writeFileSync(logPath, "");

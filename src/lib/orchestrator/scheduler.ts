@@ -15,9 +15,10 @@ import {
 } from "../repo";
 import { getSettings } from "../settings";
 import type { Project, Run } from "../types";
+import { chainTick, startTaskOrChain } from "./chain-runner";
 import { planTick } from "./plan-runner";
 import { reconcileRefinements } from "./planner";
-import { activeRunCount, reconcileRunningRuns, startRun } from "./runner";
+import { activeRunCount, reconcileRunningRuns } from "./runner";
 
 const globalForSched = globalThis as unknown as {
   __leoScheduler?: {
@@ -79,6 +80,7 @@ async function pollAll(): Promise<{ sourcesPolled: number }> {
             description: it.description,
             url: it.url,
             raw: it.raw,
+            source_role: src.role ?? "development",
           });
         }
         if (!errorByIntegration.has(integ.id))
@@ -133,16 +135,20 @@ async function enqueueDue(): Promise<number> {
   const queued = await listTasks({ status: "queued", limit: 200 });
   for (const t of queued) {
     if (activeRunCount() >= max) break;
+    if (t.parent_task_id) continue; // chain children are managed by chainTick
     const proj = projById.get(t.project_id);
     if (!proj || !proj.enabled || !due(t.scheduled_for)) continue;
     await tryStart(t.id, proj);
   }
 
-  // 2) Auto-mode pending tasks — only when the global switch is on.
+  // 2) Auto-mode pending tasks — only when the global switch is on. Tasks pulled
+  // from a planning-only source are never auto-run (they feed the plan picker).
   if (settings.auto_run_enabled) {
     const pending = await listTasks({ status: "pending", limit: 200 });
     for (const t of pending) {
       if (activeRunCount() >= max) break;
+      if (t.source_role === "planning") continue;
+      if (t.parent_task_id) continue; // chain children are managed by chainTick
       const proj = projById.get(t.project_id);
       if (!proj || !proj.enabled || !proj.auto_mode || !due(t.scheduled_for))
         continue;
@@ -157,7 +163,7 @@ async function safeStart(taskId: number, projectId: number): Promise<void> {
   const project = await getProject(projectId);
   if (!task || !project) return;
   try {
-    await startRun(task, project);
+    await startTaskOrChain(task, project);
   } catch (e) {
     await setTaskStatus(taskId, "failed");
     state.lastError = `startRun: ${(e as Error).message}`;
@@ -173,6 +179,10 @@ async function tick(): Promise<{ sourcesPolled: number; started: number }> {
   // tasks (status 'queued') get started in the same tick.
   await planTick().catch((e) => {
     state.lastError = `planTick: ${(e as Error).message}`;
+  });
+  // Advance ClickUp subtask chains (one run per subtask on a shared branch).
+  await chainTick().catch((e) => {
+    state.lastError = `chainTick: ${(e as Error).message}`;
   });
   const started = await enqueueDue().catch((e) => {
     state.lastError = `enqueue: ${(e as Error).message}`;
@@ -190,6 +200,7 @@ export async function pollNow(): Promise<{
 }> {
   const poll = await pollAll();
   await planTick().catch(() => {});
+  await chainTick().catch(() => {});
   const started = await enqueueDue();
   state.lastTickAt = new Date().toISOString();
   const pendingTasks = await listTasks({ status: "pending", limit: 1000 });
@@ -232,8 +243,9 @@ export async function startTaskRun(taskId: number): Promise<{
     return { started: false, queued: true };
   }
   if (await claimTaskForRun(taskId)) {
-    const run = await startRun(task, project);
-    return { started: true, queued: false, run };
+    // ClickUp tasks with subtasks expand into a shared-branch chain (no single run).
+    const res = await startTaskOrChain(task, project);
+    return { started: true, queued: false, run: res.run ?? undefined };
   }
   return { started: false, queued: false, reason: "No se pudo reclamar la tarea" };
 }

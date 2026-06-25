@@ -55,6 +55,36 @@ export interface IntegrationProvider {
     config: Record<string, unknown>,
     externalId: string,
   ): Promise<{ listId: string | null; url: string | null }>;
+  /** Current (markdown) description of a task. */
+  getTaskDescription?(
+    config: Record<string, unknown>,
+    externalId: string,
+  ): Promise<string>;
+  /** Overwrite a task's description with markdown. */
+  updateTaskDescription?(
+    config: Record<string, unknown>,
+    externalId: string,
+    markdown: string,
+  ): Promise<ProviderTestResult>;
+  /** Subtasks of a task, in order (for subtask-chain execution). */
+  fetchSubtasks?(
+    config: Record<string, unknown>,
+    externalId: string,
+  ): Promise<{ id: string; name: string; url: string | null }[]>;
+  /** Attachments on a task (used to import images into a plan). */
+  fetchAttachments?(
+    config: Record<string, unknown>,
+    externalId: string,
+  ): Promise<
+    { title: string; extension: string; url: string; mimetype: string }[]
+  >;
+  /** Upload a file as an attachment on a task. */
+  uploadAttachment?(
+    config: Record<string, unknown>,
+    externalId: string,
+    filename: string,
+    data: Buffer,
+  ): Promise<ProviderTestResult>;
 }
 
 export type SourceMeta =

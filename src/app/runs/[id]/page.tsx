@@ -12,6 +12,7 @@ import {
   statusBadgeClass,
   timeAgo,
 } from "@/components/format";
+import { RunInteractions } from "@/components/RunInteractions";
 import type { Run, Task } from "@/lib/types";
 
 interface LogEntry {
@@ -154,6 +155,8 @@ export default function RunDetailPage() {
           )}
         </div>
       )}
+
+      <RunInteractions runId={run.id} active={run.status === "running"} />
 
       {run.error && (
         <div

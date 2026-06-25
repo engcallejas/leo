@@ -6,9 +6,10 @@ import {
   buildClaudeEnv,
   resolveProjectExec,
 } from "../claude-auth";
-import { LOGS_DIR, run as dbRun } from "../db";
+import { DATA_DIR, LOGS_DIR, run as dbRun } from "../db";
 import { getProvider } from "../integrations";
 import {
+  cancelRunInteractions,
   createRun,
   getIntegration,
   getProject,
@@ -19,8 +20,10 @@ import {
   updateRun,
 } from "../repo";
 import { getSettings } from "../settings";
+import { buildSpecContext } from "../specs";
 import type { Project, Run, Task } from "../types";
-import { buildPrompt } from "./prompt";
+import { buildPrompt, type ChainContext } from "./prompt";
+import { buildRunExtras, mergeAllowedTools } from "./run-config";
 
 // Runs are spawned DETACHED and write their stream-json straight to the log
 // file, so they survive a Leo restart. We track them by pid and finalize each
@@ -69,10 +72,57 @@ function appendLine(logPath: string, obj: unknown): void {
   }
 }
 
+const ARTIFACT_IMG_RE = /\.(png|jpe?g|gif|webp|svg|bmp|avif)$/i;
+
+/** Upload images the run saved to its artifacts dir as ClickUp attachments. */
+async function uploadRunArtifacts(
+  task: Task,
+  runId: number,
+  logPath: string,
+): Promise<void> {
+  if (!task.integration_id || task.source_type !== "clickup") return;
+  const dir = path.join(DATA_DIR, "artifacts", `run-${runId}`);
+  let files: string[];
+  try {
+    files = fs.readdirSync(dir).filter((f) => ARTIFACT_IMG_RE.test(f));
+  } catch {
+    return; // no artifacts dir / empty
+  }
+  if (!files.length) return;
+  const integ = await getIntegration(task.integration_id);
+  const provider = integ ? getProvider(integ.type) : null;
+  if (!integ || !provider?.uploadAttachment) return;
+  const config = integ.config as unknown as Record<string, unknown>;
+  let n = 0;
+  for (const f of files.slice(0, 10)) {
+    try {
+      const buf = fs.readFileSync(path.join(dir, f));
+      const r = await provider.uploadAttachment(config, task.external_id, f, buf);
+      if (r.ok) n++;
+    } catch {
+      /* skip this file */
+    }
+  }
+  if (n) {
+    appendLine(logPath, { type: "leo_artifacts", count: n });
+    if (provider.addComment) {
+      await provider
+        .addComment(
+          config,
+          task.external_id,
+          `🦁 Leo adjuntó ${n} imagen(es) del resultado a la tarea.`,
+        )
+        .catch(() => {});
+    }
+  }
+}
+
 function buildArgs(
   project: Project,
   prompt: string,
   model: string | null,
+  allowedTools: string | null,
+  extraArgs: string[],
 ): string[] {
   const args = ["-p", prompt, "--output-format", "stream-json", "--verbose"];
   if (project.permission_mode === "bypassPermissions") {
@@ -80,8 +130,8 @@ function buildArgs(
   } else {
     args.push("--permission-mode", project.permission_mode);
   }
-  if (project.allowed_tools && project.allowed_tools.trim()) {
-    args.push("--allowedTools", project.allowed_tools.trim());
+  if (allowedTools && allowedTools.trim()) {
+    args.push("--allowedTools", allowedTools.trim());
   }
   if (project.disallowed_tools && project.disallowed_tools.trim()) {
     args.push("--disallowedTools", project.disallowed_tools.trim());
@@ -92,6 +142,7 @@ function buildArgs(
   if (project.max_turns && project.max_turns > 0) {
     args.push("--max-turns", String(project.max_turns));
   }
+  args.push(...extraArgs);
   args.push("--add-dir", project.repo_path);
   return args;
 }
@@ -137,6 +188,7 @@ async function failRun(
   appendLine(logPath, { type: "leo_error", message });
   await updateRun(runId, { status: "failed", error: message, finished: true });
   await setTaskStatus(taskId, "failed");
+  await cancelRunInteractions(runId).catch(() => {});
   activePids.delete(runId);
   watched.delete(runId);
   return (await getRun(runId))!;
@@ -175,9 +227,36 @@ async function finalizeRun(
     finished: true,
   });
   await setTaskStatus(task.id, isError ? "failed" : "done");
+  await cancelRunInteractions(runId).catch(() => {});
 
-  // On success, optionally resolve the source item (e.g. Sentry issue).
-  if (
+  // On success, attach any result images the run saved to its artifacts dir.
+  if (!isError) {
+    await uploadRunArtifacts(task, runId, logPath).catch(() => {});
+  }
+
+  // Chain child (a ClickUp subtask run): on success move the subtask to
+  // 'complete' — the parent is moved separately when the whole chain finishes.
+  if (!isError && task.parent_task_id && task.integration_id) {
+    try {
+      const integ = await getIntegration(task.integration_id);
+      const provider = integ ? getProvider(integ.type) : null;
+      if (integ && provider?.resolveTask) {
+        const r = await provider.resolveTask(
+          integ.config as unknown as Record<string, unknown>,
+          task.external_id,
+          { status: "complete" },
+        );
+        appendLine(logPath, { type: "leo_resolve", ok: r.ok, message: r.message });
+      }
+    } catch (e) {
+      appendLine(logPath, {
+        type: "leo_resolve",
+        ok: false,
+        message: `Error al completar subtask: ${(e as Error).message}`,
+      });
+    }
+  } else if (
+    // On success, optionally resolve the source item (e.g. Sentry issue).
     !isError &&
     project.resolve_source_on_done &&
     task.integration_id &&
@@ -242,7 +321,11 @@ function watchRun(
   setTimeout(tick, 2000);
 }
 
-export async function startRun(task: Task, project: Project): Promise<Run> {
+export async function startRun(
+  task: Task,
+  project: Project,
+  chain?: ChainContext,
+): Promise<Run> {
   const settings = await getSettings();
 
   const runRow = await createRun({
@@ -292,8 +375,46 @@ export async function startRun(task: Task, project: Project): Promise<Run> {
     }
   }
 
-  const prompt = buildPrompt(project, task, extraContext);
-  const args = buildArgs(project, prompt, exec.model);
+  // Requirement docs (SDD/AIDLC) injected as ground-truth context.
+  const specContext = buildSpecContext(project, true);
+  const interactiveNote = project.interactive
+    ? `\n\n## Preguntas al humano\nSi el requerimiento es ambiguo o un paso necesita aprobación, NO asumas: usa la tool \`mcp__leo__ask_user\` (o \`mcp__leo__request_approval\` para aprobar/rechazar una acción) y espera la respuesta antes de continuar.`
+    : "";
+
+  // Per-run artifacts dir: the agent saves screenshots/result images here, and
+  // Leo attaches them to the ClickUp task on success. Granted via --add-dir.
+  const artifactsDir = path.join(DATA_DIR, "artifacts", `run-${runRow.id}`);
+  try {
+    fs.mkdirSync(artifactsDir, { recursive: true });
+  } catch {
+    /* ignore */
+  }
+  const artifactNote =
+    task.source_type === "clickup"
+      ? `\n\n## Capturas para ClickUp\nSi generas screenshots/capturas (p. ej. en la verificación visual), guárdalas como archivos de imagen en "${artifactsDir}". Leo las adjuntará automáticamente a la tarea de ClickUp al terminar con éxito.`
+      : "";
+
+  const basePrompt = buildPrompt(project, task, extraContext, chain);
+  const prompt =
+    `${basePrompt}${specContext ? `\n\n${specContext}` : ""}${interactiveNote}${artifactNote}`;
+
+  // Per-run MCP servers (dev scope) + hooks settings + the Leo ask_user MCP
+  // when this project is interactive.
+  const extras = buildRunExtras({
+    project,
+    scope: "development",
+    baseName: `run-${runRow.id}`,
+    interactiveRunId: runRow.id,
+  });
+  const allowedTools = mergeAllowedTools(
+    project.allowed_tools,
+    extras.allowedMcpTools,
+  );
+  const args = buildArgs(project, prompt, exec.model, allowedTools, [
+    ...extras.args,
+    "--add-dir",
+    artifactsDir,
+  ]);
   appendLine(logPath, {
     type: "leo_start",
     bin: settings.claude_binary_path,
@@ -301,6 +422,7 @@ export async function startRun(task: Task, project: Project): Promise<Run> {
     permission_mode: project.permission_mode,
     auth_method: exec.method,
     model: exec.model,
+    mcp: extras.allowedMcpTools,
     prompt,
   });
 

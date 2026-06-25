@@ -59,6 +59,9 @@ export interface ClickUpConfig {
   teamId?: string;
 }
 
+/** What a source feeds: development auto-run, the planning backlog, or both. */
+export type SourceRole = "development" | "planning" | "both";
+
 /**
  * A binding declared on a project: "pull items matching <filter> from
  * <integration> and turn them into tasks for me".
@@ -71,6 +74,24 @@ export interface ProjectSource {
    * Stored generically; providers cast to their specific filter shape.
    */
   filter: Record<string, unknown>;
+  /** development (default) feeds auto-run; planning feeds the plan picker. */
+  role?: SourceRole;
+}
+
+/** An MCP server made available to a project's planning and/or dev runs. */
+export interface McpServer {
+  name: string;
+  transport: "stdio" | "http" | "sse";
+  /** stdio */
+  command?: string;
+  args?: string[];
+  env?: Record<string, string>;
+  /** http / sse */
+  url?: string;
+  headers?: Record<string, string>;
+  /** Where this server is injected. */
+  planning: boolean;
+  development: boolean;
 }
 
 export interface SentrySourceFilter {
@@ -108,6 +129,16 @@ export interface Project {
   resolve_source_on_done: boolean;
   /** Auth method for this project: inherit global, or force subscription/api-key. */
   auth_method: ProjectAuthMethod;
+  /** MCP servers available to this project's runs (planning and/or dev). */
+  mcp_servers: McpServer[];
+  /** Only use Leo-provided MCP servers, ignoring the repo's .mcp.json. */
+  strict_mcp: boolean;
+  /** Raw JSON for a Claude settings `hooks` object; "" = none. */
+  hooks: string;
+  /** Newline/comma-separated globs of requirement docs (SDD/AIDLC specs). */
+  spec_globs: string;
+  /** Let Claude ask clarifying questions via the Leo MCP (ask_user). */
+  interactive: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -125,6 +156,12 @@ export interface Task {
   status: TaskStatus;
   /** ISO datetime; if set and in the future, the task waits until then. */
   scheduled_for: string | null;
+  /** Role of the source that produced it; 'planning' tasks aren't auto-run. */
+  source_role: SourceRole;
+  /** For a ClickUp subtask run: the parent (chain) task it belongs to. */
+  parent_task_id: number | null;
+  /** Shared git branch for a subtask chain (set on the parent and its children). */
+  chain_branch: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -147,6 +184,21 @@ export interface Run {
   finished_at: string | null;
 }
 
+/** A question/approval Claude raised mid-run, awaiting a human answer in the UI. */
+export interface RunInteraction {
+  id: number;
+  run_id: number;
+  task_id: number | null;
+  /** 'question' = free/choice answer; 'approval' = allow/deny. */
+  kind: "question" | "approval";
+  question: string;
+  options: string[];
+  status: "pending" | "answered" | "cancelled";
+  answer: string | null;
+  created_at: string;
+  answered_at: string | null;
+}
+
 /** Normalized item returned by an integration provider when polling. */
 export interface PulledItem {
   external_id: string;
@@ -164,6 +216,7 @@ export type PlanStatus =
   | "refined" // has a refined spec + steps, ready to push/enqueue
   | "queued" // orchestration requested, waiting for the first step
   | "running" // a step is executing
+  | "dispatched" // handed off to the ClickUp dev flow (moved to dev status)
   | "done" // all steps finished successfully
   | "failed" // a step failed (orchestration stopped)
   | "cancelled";
@@ -222,6 +275,17 @@ export interface PlanStep {
 
 export interface PlanWithSteps extends Plan {
   steps: PlanStep[];
+}
+
+/** An image/file attached to a plan so Claude can read it (mockups, screenshots). */
+export interface PlanAttachment {
+  id: number;
+  plan_id: number;
+  filename: string;
+  path: string;
+  mime: string;
+  size: number;
+  created_at: string;
 }
 
 /** Structured output a refinement run is expected to produce. */

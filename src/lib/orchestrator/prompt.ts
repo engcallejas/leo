@@ -1,5 +1,15 @@
 import type { Project, Task } from "../types";
 
+/** Shared-branch subtask-chain context for a step run. */
+export interface ChainContext {
+  branch: string;
+  base: string;
+  index: number; // 0-based
+  total: number;
+  isLast: boolean;
+  priors: { title: string; summary: string }[];
+}
+
 /**
  * Compose the full instruction handed to `claude -p`. The repo's own CLAUDE.md
  * and .mcp.json are picked up automatically by the CLI (cwd = repo), so this
@@ -9,6 +19,7 @@ export function buildPrompt(
   project: Project,
   task: Task,
   extraContext = "",
+  chain?: ChainContext,
 ): string {
   const sourceLabel =
     task.source_type === "manual"
@@ -41,6 +52,43 @@ export function buildPrompt(
       `\n## Project rules (can / must / must-not)`,
       project.prompt_rules.trim(),
     );
+  }
+
+  if (chain) {
+    // Subtask N of M on a SHARED branch: progressive increments, one PR at the end.
+    if (chain.priors.length) {
+      sections.push(
+        `\n## Subtareas previas ya completadas (en esta misma branch)`,
+        `Tu trabajo CONTINÚA sobre lo ya hecho; no lo rehagas. Mantén consistencia:`,
+        chain.priors
+          .map(
+            (p, i) =>
+              `### ${i + 1}. ${p.title}\n${(p.summary || "(sin resumen)").slice(0, 1200)}`,
+          )
+          .join("\n\n"),
+      );
+    }
+    const finalize: string[] = [
+      `\n## Workflow & finalization (subtarea ${chain.index + 1} de ${chain.total} · branch compartida)`,
+      `- Respeta el CLAUDE.md, los patrones del repo y las validaciones por MCP (Supabase, Playwright). Córrelas y déjalas en verde antes de terminar.`,
+      `- Trabaja TODO sobre la branch "${chain.branch}" (base: "${chain.base}"). Si "${chain.branch}" no existe aún, créala desde "${chain.base}"; si ya existe, haz checkout y CONTINÚA sobre ella (ya trae los commits de las subtareas anteriores).`,
+      `- Implementa ÚNICAMENTE esta subtarea, construyendo sobre las anteriores. No abarques las siguientes.`,
+      `- Haz commit de tu incremento y push a "${chain.branch}".`,
+    ];
+    if (chain.isLast) {
+      finalize.push(
+        `- Esta es la ÚLTIMA subtarea: tras commitear, abre UN solo Pull Request desde "${chain.branch}" que cubra toda la tarea, y asegúrate de que los checks pasen.`,
+      );
+    } else {
+      finalize.push(
+        `- NO abras un Pull Request todavía — las siguientes subtareas seguirán agregando a esta misma branch. Solo commit + push.`,
+      );
+    }
+    finalize.push(
+      `- Termina con un resumen corto de lo que cambiaste y las validaciones que corriste.`,
+    );
+    sections.push(finalize.join("\n"));
+    return sections.filter(Boolean).join("\n");
   }
 
   const finalize: string[] = [

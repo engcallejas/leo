@@ -1,4 +1,5 @@
 import { badRequest, json, notFound, parse, serverError } from "@/lib/api";
+import { importClickupAttachments } from "@/lib/orchestrator/plan-runner";
 import { createPlan, listPlans } from "@/lib/plan-repo";
 import { getProject, getTask } from "@/lib/repo";
 import { planCreateSchema } from "@/lib/validators";
@@ -42,6 +43,10 @@ export async function POST(req: Request, { params }: Ctx) {
         source_external_id: task.external_id,
         source_url: task.url,
       });
+      // Best-effort: pull the ClickUp task's image attachments into the plan.
+      if (plan.source_type === "clickup") {
+        await importClickupAttachments(plan.id).catch(() => {});
+      }
       return json(plan, 201);
     }
 

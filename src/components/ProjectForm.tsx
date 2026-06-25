@@ -2,11 +2,13 @@
 
 import { useState } from "react";
 import { FolderPicker } from "@/components/FolderPicker";
+import { McpEditor } from "@/components/McpEditor";
 import { ModelInput } from "@/components/ModelInput";
 import { SourceEditor } from "@/components/SourceEditor";
 import { Field } from "@/components/ui";
 import type {
   Integration,
+  McpServer,
   PermissionMode,
   Project,
   ProjectAuthMethod,
@@ -30,6 +32,11 @@ export type Draft = {
   enabled: boolean;
   resolve_source_on_done: boolean;
   auth_method: ProjectAuthMethod;
+  mcp_servers: McpServer[];
+  strict_mcp: boolean;
+  hooks: string;
+  spec_globs: string;
+  interactive: boolean;
 };
 
 export function emptyDraft(): Draft {
@@ -50,6 +57,11 @@ export function emptyDraft(): Draft {
     enabled: true,
     resolve_source_on_done: true,
     auth_method: "inherit",
+    mcp_servers: [],
+    strict_mcp: false,
+    hooks: "",
+    spec_globs: "",
+    interactive: false,
   };
 }
 
@@ -71,6 +83,11 @@ export function projectToDraft(p: Project): Draft {
     enabled: p.enabled,
     resolve_source_on_done: p.resolve_source_on_done,
     auth_method: p.auth_method,
+    mcp_servers: p.mcp_servers ?? [],
+    strict_mcp: p.strict_mcp ?? false,
+    hooks: p.hooks ?? "",
+    spec_globs: p.spec_globs ?? "",
+    interactive: p.interactive ?? false,
   };
 }
 
@@ -91,6 +108,11 @@ export function draftToBody(draft: Draft) {
     enabled: draft.enabled,
     resolve_source_on_done: draft.resolve_source_on_done,
     auth_method: draft.auth_method,
+    mcp_servers: draft.mcp_servers,
+    strict_mcp: draft.strict_mcp,
+    hooks: draft.hooks || "",
+    spec_globs: draft.spec_globs || "",
+    interactive: draft.interactive,
   };
 }
 
@@ -292,6 +314,70 @@ export function ProjectForm({
           Sentry: marca el issue como <code>resolved</code> cuando el run termina
           bien (p. ej. tras abrir el PR). Solo aplica a tareas que vienen de una
           integración.
+        </div>
+      </div>
+
+      <div style={{ borderTop: "1px solid var(--border)", paddingTop: 14 }}>
+        <label className="label">
+          Documentos de requerimientos (SDD / AIDLC)
+        </label>
+        <textarea
+          className="textarea"
+          style={{ minHeight: 60, fontFamily: "var(--mono, monospace)", fontSize: 13 }}
+          value={draft.spec_globs}
+          placeholder={"specs/**/*.md\n.aidlc/**/*.md\ndocs/requirements/**/*.md"}
+          onChange={(e) => set("spec_globs", e.target.value)}
+        />
+        <div className="hint">
+          Globs (uno por línea o separados por coma) de los .md de
+          especificación. Leo los inyecta en el contexto de planeación y
+          desarrollo, y podrás leerlos desde la interfaz.
+        </div>
+      </div>
+
+      <McpEditor
+        servers={draft.mcp_servers}
+        onChange={(m) => set("mcp_servers", m)}
+        strictMcp={draft.strict_mcp}
+        onStrictChange={(v) => set("strict_mcp", v)}
+      />
+
+      <div style={{ borderTop: "1px solid var(--border)", paddingTop: 14 }}>
+        <label className="label">Hooks (settings JSON, opcional)</label>
+        <textarea
+          className="textarea"
+          style={{ minHeight: 90, fontFamily: "var(--mono, monospace)", fontSize: 12.5 }}
+          value={draft.hooks}
+          placeholder={`{
+  "PostToolUse": [
+    { "matcher": "Edit|Write", "hooks": [
+      { "type": "command", "command": "npm run lint --silent" }
+    ]}
+  ]
+}`}
+          onChange={(e) => set("hooks", e.target.value)}
+        />
+        <div className="hint">
+          Objeto <code>hooks</code> de Claude Code (PreToolUse/PostToolUse/Stop…).
+          Se pasa con <code>--settings</code> en las ejecuciones de desarrollo.
+          Útil para validaciones/guardas automáticas. Debe ser JSON válido.
+        </div>
+      </div>
+
+      <div style={{ borderTop: "1px solid var(--border)", paddingTop: 14 }}>
+        <label style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <input
+            type="checkbox"
+            checked={draft.interactive}
+            onChange={(e) => set("interactive", e.target.checked)}
+          />
+          <span style={{ fontSize: 13 }}>
+            Permitir que Claude haga preguntas (MCP <code>leo</code> / ask_user)
+          </span>
+        </label>
+        <div className="hint">
+          Inyecta un MCP que deja a Claude pausar y preguntarte desde la UI del
+          run (p. ej. decisiones de ambigüedad en SDD/AIDLC) en vez de asumir.
         </div>
       </div>
 

@@ -186,13 +186,31 @@ export const clickupProvider: IntegrationProvider = {
     const h = headers(config);
     const parts: string[] = [];
 
-    const taskRes = await fetchJson(`${API}/task/${externalId}`, { headers: h });
+    const taskRes = await fetchJson(
+      `${API}/task/${externalId}?include_subtasks=true`,
+      { headers: h },
+    );
     if (taskRes.status === 200) {
       const t = taskRes.body as {
         description?: string;
         text_content?: string;
         attachments?: { title?: string; extension?: string; url?: string }[];
+        subtasks?: {
+          id?: string;
+          name?: string;
+          status?: { status?: string };
+        }[];
       };
+      const subs = t.subtasks ?? [];
+      if (subs.length) {
+        const lines = subs.map(
+          (s, i) =>
+            `${i + 1}. [${s.status?.status ?? "?"}] ${s.name ?? "(sin título)"} (id ${s.id})`,
+        );
+        parts.push(
+          `### Subtareas (${subs.length})\nEsta tarea tiene subtareas. Considéralas como el desglose del trabajo:\n${lines.join("\n")}`,
+        );
+      }
       const desc = (t.description || t.text_content || "").trim();
       if (desc) parts.push(`### Descripción completa\n${truncate(desc, 6000)}`);
       const atts = t.attachments ?? [];
@@ -278,5 +296,101 @@ export const clickupProvider: IntegrationProvider = {
       return { listId: t.list?.id ?? null, url: t.url ?? null };
     }
     return { listId: null, url: null };
+  },
+
+  async getTaskDescription(raw, externalId): Promise<string> {
+    const config = raw as unknown as ClickUpConfig;
+    const { status, body } = await fetchJson(
+      `${API}/task/${externalId}?include_markdown_description=true`,
+      { headers: headers(config) },
+    );
+    if (status === 200) {
+      const t = body as { markdown_description?: string; description?: string };
+      return (t.markdown_description || t.description || "").trim();
+    }
+    return "";
+  },
+
+  async uploadAttachment(raw, externalId, filename, data): Promise<ProviderTestResult> {
+    const config = raw as unknown as ClickUpConfig;
+    const form = new FormData();
+    // Buffer → Uint8Array for a Web Blob (Node 20 global Blob/FormData/fetch).
+    form.append(
+      "attachment",
+      new Blob([new Uint8Array(data)]),
+      filename,
+    );
+    try {
+      const res = await fetch(`${API}/task/${externalId}/attachment`, {
+        method: "POST",
+        headers: { Authorization: config.token }, // do NOT set Content-Type
+        body: form,
+      });
+      if (res.ok) return { ok: true, message: `Adjunto "${filename}" subido.` };
+      return {
+        ok: false,
+        message: `ClickUp attachment ${res.status}: ${truncate(await res.text(), 150)}`,
+      };
+    } catch (e) {
+      return { ok: false, message: (e as Error).message };
+    }
+  },
+
+  async fetchAttachments(raw, externalId): Promise<{ title: string; extension: string; url: string; mimetype: string }[]> {
+    const config = raw as unknown as ClickUpConfig;
+    const { status, body } = await fetchJson(`${API}/task/${externalId}`, {
+      headers: headers(config),
+    });
+    if (status !== 200) return [];
+    const atts =
+      (body as {
+        attachments?: {
+          title?: string;
+          extension?: string;
+          url?: string;
+          mimetype?: string;
+        }[];
+      })?.attachments ?? [];
+    return atts
+      .filter((a) => a.url)
+      .map((a) => ({
+        title: a.title ?? "attachment",
+        extension: (a.extension ?? "").toLowerCase(),
+        url: a.url as string,
+        mimetype: a.mimetype ?? "",
+      }));
+  },
+
+  async fetchSubtasks(raw, externalId): Promise<{ id: string; name: string; url: string | null }[]> {
+    const config = raw as unknown as ClickUpConfig;
+    const { status, body } = await fetchJson(
+      `${API}/task/${externalId}?include_subtasks=true`,
+      { headers: headers(config) },
+    );
+    if (status !== 200) return [];
+    const subs =
+      (body as {
+        subtasks?: { id?: string; name?: string; url?: string; orderindex?: string }[];
+      })?.subtasks ?? [];
+    return subs
+      .filter((s) => s.id)
+      .sort((a, b) => Number(a.orderindex ?? 0) - Number(b.orderindex ?? 0))
+      .map((s) => ({ id: String(s.id), name: s.name ?? `Subtask ${s.id}`, url: s.url ?? null }));
+  },
+
+  async updateTaskDescription(raw, externalId, markdown): Promise<ProviderTestResult> {
+    const config = raw as unknown as ClickUpConfig;
+    const { status, body } = await fetchJson(`${API}/task/${externalId}`, {
+      method: "PUT",
+      headers: headers(config),
+      body: JSON.stringify({ markdown_content: markdown }),
+    });
+    if (status === 200) {
+      return { ok: true, message: "Descripción de la tarea ClickUp actualizada." };
+    }
+    return {
+      ok: false,
+      message: `ClickUp PUT descripción ${status}: ${truncate(JSON.stringify(body), 150)}`,
+    };
   },
 };

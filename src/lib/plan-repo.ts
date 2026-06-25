@@ -1,6 +1,7 @@
 import { query, queryOne, run } from "./db";
 import type {
   Plan,
+  PlanAttachment,
   PlanStatus,
   PlanStep,
   PlanStepStatus,
@@ -250,6 +251,59 @@ export async function replaceSteps(
       [planId, i, steps[i].title, steps[i].spec ?? ""],
     );
   }
+}
+
+// ---------- plan attachments ----------
+type AttRow = Record<string, unknown>;
+
+function mapAttachment(r: AttRow): PlanAttachment {
+  return {
+    id: Number(r.id),
+    plan_id: Number(r.plan_id),
+    filename: String(r.filename),
+    path: String(r.path),
+    mime: String(r.mime ?? ""),
+    size: Number(r.size ?? 0),
+    created_at: String(r.created_at),
+  };
+}
+
+export async function addAttachment(input: {
+  plan_id: number;
+  filename: string;
+  path: string;
+  mime: string;
+  size: number;
+}): Promise<PlanAttachment> {
+  const res = await run(
+    "INSERT INTO plan_attachments (plan_id, filename, path, mime, size) VALUES (?, ?, ?, ?, ?)",
+    [input.plan_id, input.filename, input.path, input.mime, input.size],
+  );
+  return (await getAttachment(res.lastInsertRowid))!;
+}
+
+export async function getAttachment(
+  id: number,
+): Promise<PlanAttachment | null> {
+  const r = await queryOne<AttRow>(
+    "SELECT * FROM plan_attachments WHERE id = ?",
+    [id],
+  );
+  return r ? mapAttachment(r) : null;
+}
+
+export async function listAttachments(
+  planId: number,
+): Promise<PlanAttachment[]> {
+  const rows = await query<AttRow>(
+    "SELECT * FROM plan_attachments WHERE plan_id = ? ORDER BY id ASC",
+    [planId],
+  );
+  return rows.map(mapAttachment);
+}
+
+export async function deleteAttachment(id: number): Promise<void> {
+  await run("DELETE FROM plan_attachments WHERE id = ?", [id]);
 }
 
 /**

@@ -38,8 +38,12 @@ export default function NewPlanPage() {
     api
       .get(`/api/tasks?project_id=${projectId}`)
       .then((t: Task[]) => {
-        setTasks(t);
-        setTaskId(t[0]?.id ?? null);
+        // Planning/both/manual tasks first — those are the ones meant to be planned.
+        const rank = (x: Task) =>
+          x.source_type === "manual" || x.source_role !== "development" ? 0 : 1;
+        const sorted = [...t].sort((a, b) => rank(a) - rank(b));
+        setTasks(sorted);
+        setTaskId(sorted[0]?.id ?? null);
       })
       .catch(() => setTasks([]));
   }, [projectId]);
@@ -130,6 +134,11 @@ export default function NewPlanPage() {
               >
                 {tasks.map((t) => (
                   <option key={t.id} value={t.id}>
+                    {t.source_role === "planning"
+                      ? "◆ "
+                      : t.source_role === "both"
+                        ? "◈ "
+                        : ""}
                     [{t.source_type}] {t.title.slice(0, 70)} —{" "}
                     {taskStatusLabel(t.status)}
                   </option>

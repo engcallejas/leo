@@ -9,10 +9,12 @@ export const DATA_DIR = process.env.LEO_DATA_DIR
   ? path.resolve(process.env.LEO_DATA_DIR)
   : path.join(process.cwd(), "data");
 export const LOGS_DIR = path.join(DATA_DIR, "logs");
+export const UPLOADS_DIR = path.join(DATA_DIR, "uploads");
 const DB_PATH = path.join(DATA_DIR, "leo.db");
 
 function ensureDirs() {
   fs.mkdirSync(LOGS_DIR, { recursive: true });
+  fs.mkdirSync(UPLOADS_DIR, { recursive: true });
 }
 
 // Survive Next.js HMR / multiple imports in dev with a global singleton.
@@ -72,6 +74,22 @@ export function migrate(): Promise<void> {
         "auth_method",
         "TEXT NOT NULL DEFAULT 'inherit'",
       );
+      // Round 2: per-project MCPs, hooks, requirement specs, interactivity, and
+      // source roles (planning vs development).
+      await ensureColumn(db, "projects", "mcp_servers", "TEXT NOT NULL DEFAULT '[]'");
+      await ensureColumn(db, "projects", "strict_mcp", "INTEGER NOT NULL DEFAULT 0");
+      await ensureColumn(db, "projects", "hooks", "TEXT NOT NULL DEFAULT ''");
+      await ensureColumn(db, "projects", "spec_globs", "TEXT NOT NULL DEFAULT ''");
+      await ensureColumn(db, "projects", "interactive", "INTEGER NOT NULL DEFAULT 0");
+      await ensureColumn(
+        db,
+        "tasks",
+        "source_role",
+        "TEXT NOT NULL DEFAULT 'development'",
+      );
+      // ClickUp subtask chain execution (one run per subtask, shared branch).
+      await ensureColumn(db, "tasks", "parent_task_id", "INTEGER");
+      await ensureColumn(db, "tasks", "chain_branch", "TEXT");
       for (const [key, value] of Object.entries(DEFAULT_SETTINGS)) {
         await db.execute({
           sql: "INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO NOTHING",
