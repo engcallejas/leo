@@ -54,6 +54,16 @@ export function buildPrompt(
     );
   }
 
+  // When the project is interactive, the Leo MCP is available: tell the agent to
+  // pull human steering notes at checkpoints so the human can course-correct it
+  // mid-run without restarting.
+  if (project.interactive) {
+    sections.push(
+      `\n## Stay in sync with the human (IMPORTANT)`,
+      `The human may push you instructions WHILE you work. Call the \`mcp__leo__check_in\` tool PROACTIVELY at every checkpoint — before committing, before opening the PR, after finishing each logical chunk, and whenever you'd otherwise proceed on an assumption. It's cheap and returns instantly. If it returns new notes, incorporate them before continuing; if not, keep going.`,
+    );
+  }
+
   if (chain) {
     // Subtask N of M on a SHARED branch: progressive increments, one PR at the end.
     if (chain.priors.length) {

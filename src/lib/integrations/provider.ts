@@ -60,6 +60,15 @@ export interface IntegrationProvider {
     config: Record<string, unknown>,
     externalId: string,
   ): Promise<string>;
+  /**
+   * Fresh seed fields (title/objective/url) pulled live from the source task,
+   * used to re-sync a plan with the latest version of its ClickUp task. Returns
+   * null if the task can't be read.
+   */
+  fetchTaskSeed?(
+    config: Record<string, unknown>,
+    externalId: string,
+  ): Promise<{ title: string; objective: string; url: string | null } | null>;
   /** Overwrite a task's description with markdown. */
   updateTaskDescription?(
     config: Record<string, unknown>,

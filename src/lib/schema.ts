@@ -160,4 +160,16 @@ CREATE INDEX IF NOT EXISTS idx_interactions_run ON run_interactions(run_id);
 CREATE INDEX IF NOT EXISTS idx_interactions_status ON run_interactions(status);
 -- idx_interactions_plan is created in the migration step (db.ts), after the
 -- plan_id column is guaranteed to exist on already-existing databases.
+
+-- Steering notes a human pushes to a RUNNING run; the agent pulls undelivered
+-- ones at its checkpoints (via the Leo MCP check_in tool) and incorporates them.
+CREATE TABLE IF NOT EXISTS run_notes (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  run_id       INTEGER NOT NULL,
+  text         TEXT NOT NULL,
+  delivered    INTEGER NOT NULL DEFAULT 0,
+  created_at   TEXT NOT NULL DEFAULT (datetime('now')),
+  delivered_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_run_notes_run ON run_notes(run_id);
 `;

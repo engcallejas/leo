@@ -9,6 +9,7 @@ import type {
   ProjectSource,
   Run,
   RunInteraction,
+  RunNote,
   RunStatus,
   SourceRole,
   SourceType,
@@ -677,6 +678,54 @@ export async function cancelPlanInteractions(planId: number): Promise<void> {
     "UPDATE run_interactions SET status = 'cancelled', answered_at = datetime('now') WHERE plan_id = ? AND status = 'pending'",
     [planId],
   );
+}
+
+// ---------- run notes (human → agent steering) ----------
+function mapNote(r: Record<string, unknown>): RunNote {
+  return {
+    id: Number(r.id),
+    run_id: Number(r.run_id),
+    text: String(r.text),
+    delivered: Number(r.delivered) === 1,
+    created_at: String(r.created_at),
+    delivered_at: (r.delivered_at as string) ?? null,
+  };
+}
+
+export async function addRunNote(runId: number, text: string): Promise<RunNote> {
+  const res = await run(
+    "INSERT INTO run_notes (run_id, text) VALUES (?, ?)",
+    [runId, text],
+  );
+  const r = await queryOne<Record<string, unknown>>(
+    "SELECT * FROM run_notes WHERE id = ?",
+    [Number(res.lastInsertRowid)],
+  );
+  return mapNote(r!);
+}
+
+export async function listRunNotes(runId: number): Promise<RunNote[]> {
+  const rows = await query<Record<string, unknown>>(
+    "SELECT * FROM run_notes WHERE run_id = ? ORDER BY id ASC",
+    [runId],
+  );
+  return rows.map(mapNote);
+}
+
+/** Return undelivered notes for a run and mark them delivered (atomic-ish). */
+export async function consumePendingRunNotes(runId: number): Promise<RunNote[]> {
+  const rows = await query<Record<string, unknown>>(
+    "SELECT * FROM run_notes WHERE run_id = ? AND delivered = 0 ORDER BY id ASC",
+    [runId],
+  );
+  const notes = rows.map(mapNote);
+  if (notes.length) {
+    await run(
+      "UPDATE run_notes SET delivered = 1, delivered_at = datetime('now') WHERE run_id = ? AND delivered = 0",
+      [runId],
+    );
+  }
+  return notes;
 }
 
 export async function countByStatus(): Promise<{

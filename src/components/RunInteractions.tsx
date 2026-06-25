@@ -73,7 +73,14 @@ export function RunInteractions({
               {it.kind === "approval" ? "Aprobación" : "Pregunta"} de Claude
             </span>
           </div>
-          <div style={{ fontSize: 14, whiteSpace: "pre-wrap", marginBottom: 12 }}>
+          <div
+            style={{
+              fontSize: 14,
+              whiteSpace: "pre-wrap",
+              overflowWrap: "anywhere",
+              marginBottom: 12,
+            }}
+          >
             {it.question}
           </div>
 
@@ -97,13 +104,22 @@ export function RunInteractions({
           ) : (
             <>
               {it.options.length > 0 && (
-                <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 10 }}>
+                <div style={{ display: "grid", gap: 8, marginBottom: 10 }}>
                   {it.options.map((o) => (
                     <button
                       key={o}
                       className="btn btn-sm"
                       disabled={busy === it.id}
                       onClick={() => answer(it.id, o)}
+                      style={{
+                        justifyContent: "flex-start",
+                        textAlign: "left",
+                        whiteSpace: "normal",
+                        overflowWrap: "anywhere",
+                        height: "auto",
+                        lineHeight: 1.45,
+                        padding: "8px 11px",
+                      }}
                     >
                       {o}
                     </button>
@@ -122,7 +138,7 @@ export function RunInteractions({
                   onKeyDown={(e) => {
                     if (e.key === "Enter") answer(it.id, draft[it.id] ?? "");
                   }}
-                  style={{ flex: 1 }}
+                  style={{ flex: 1, minWidth: 0 }}
                 />
                 <button
                   className="btn btn-primary"

@@ -13,6 +13,7 @@ import {
   timeAgo,
 } from "@/components/format";
 import { RunInteractions } from "@/components/RunInteractions";
+import { RunNotes } from "@/components/RunNotes";
 import type { Run, Task } from "@/lib/types";
 
 interface LogEntry {
@@ -157,6 +158,8 @@ export default function RunDetailPage() {
       )}
 
       <RunInteractions runId={run.id} active={run.status === "running"} />
+
+      <RunNotes runId={run.id} active={run.status === "running"} />
 
       {run.error && (
         <div

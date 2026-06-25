@@ -311,6 +311,29 @@ export const clickupProvider: IntegrationProvider = {
     return "";
   },
 
+  async fetchTaskSeed(
+    raw,
+    externalId,
+  ): Promise<{ title: string; objective: string; url: string | null } | null> {
+    const config = raw as unknown as ClickUpConfig;
+    const { status, body } = await fetchJson(
+      `${API}/task/${externalId}?include_markdown_description=true`,
+      { headers: headers(config) },
+    );
+    if (status !== 200) return null;
+    const t = body as {
+      name?: string;
+      markdown_description?: string;
+      description?: string;
+      url?: string;
+    };
+    return {
+      title: (t.name || "").trim(),
+      objective: (t.markdown_description || t.description || "").trim(),
+      url: t.url ?? null,
+    };
+  },
+
   async uploadAttachment(raw, externalId, filename, data): Promise<ProviderTestResult> {
     const config = raw as unknown as ClickUpConfig;
     const form = new FormData();

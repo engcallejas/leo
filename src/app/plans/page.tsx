@@ -32,8 +32,29 @@ export default function PlansPage() {
     return () => clearInterval(t);
   }, [load]);
 
+  const [busyId, setBusyId] = useState<number | null>(null);
+
   const projName = (id: number) =>
     projects.find((p) => p.id === id)?.name ?? `#${id}`;
+
+  const remove = async (p: Plan, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (
+      !confirm(
+        `¿Eliminar el plan #${p.id} “${p.title.slice(0, 60)}”? Si está refinando o ejecutando, se detiene primero. No se puede deshacer.`,
+      )
+    )
+      return;
+    setBusyId(p.id);
+    try {
+      await api.del(`/api/plans/${p.id}`);
+      setPlans((prev) => prev.filter((x) => x.id !== p.id));
+    } catch {
+      await load().catch(() => {});
+    } finally {
+      setBusyId(null);
+    }
+  };
 
   return (
     <div style={{ maxWidth: 1100, margin: "0 auto" }}>
@@ -66,6 +87,7 @@ export default function PlansPage() {
                 <th>Origen</th>
                 <th>Estado</th>
                 <th>Actualizado</th>
+                <th></th>
               </tr>
             </thead>
             <tbody>
@@ -90,6 +112,17 @@ export default function PlansPage() {
                   </td>
                   <td className="muted" style={{ fontSize: 12 }}>
                     {timeAgo(p.updated_at)}
+                  </td>
+                  <td style={{ width: 36, textAlign: "right" }}>
+                    <button
+                      className="btn btn-sm btn-danger"
+                      onClick={(e) => remove(p, e)}
+                      disabled={busyId === p.id}
+                      title="Eliminar plan (desde cualquier estado)"
+                      style={{ padding: "3px 8px" }}
+                    >
+                      {busyId === p.id ? "…" : "✕"}
+                    </button>
                   </td>
                 </tr>
               ))}

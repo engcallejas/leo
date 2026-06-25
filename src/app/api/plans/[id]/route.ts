@@ -1,11 +1,11 @@
 import { badRequest, json, notFound, parse, serverError } from "@/lib/api";
 import {
-  deletePlan,
   getPlan,
   getPlanWithSteps,
   replaceSteps,
   updatePlan,
 } from "@/lib/plan-repo";
+import { deletePlanFully } from "@/lib/orchestrator/plan-runner";
 import { planUpdateSchema } from "@/lib/validators";
 
 export const runtime = "nodejs";
@@ -63,7 +63,7 @@ export async function PUT(req: Request, { params }: Ctx) {
 export async function DELETE(_req: Request, { params }: Ctx) {
   const { id } = await params;
   try {
-    await deletePlan(Number(id));
+    await deletePlanFully(Number(id));
     return json({ ok: true });
   } catch (e) {
     return serverError(e);

@@ -4,6 +4,7 @@ import { UPLOADS_DIR } from "../db";
 import { getProvider } from "../integrations";
 import {
   addAttachment,
+  deletePlan,
   getPlan,
   getPlanWithSteps,
   listAttachments,
@@ -22,6 +23,7 @@ import {
 } from "../repo";
 import { truncate } from "../integrations/provider";
 import type { Plan, PlanStep, Project } from "../types";
+import { stopRefinement } from "./planner";
 import { buildAttachmentBlock } from "./run-config";
 import { stopRun } from "./runner";
 
@@ -255,6 +257,65 @@ export async function importClickupAttachments(
   };
 }
 
+/**
+ * Pull the latest version of the originating ClickUp task back INTO the plan:
+ * refresh title + objective (and re-import images). The inverse of
+ * `syncPlanToClickUp` — used when the task changed in ClickUp after the plan was
+ * first created. Does NOT touch the refined spec or steps.
+ */
+export async function resyncPlanFromClickUp(
+  planId: number,
+): Promise<{ ok: boolean; plan?: Plan; message: string }> {
+  const plan = await getPlan(planId);
+  if (!plan) return { ok: false, message: "Plan no encontrado" };
+  if (
+    plan.source_type !== "clickup" ||
+    !plan.source_external_id ||
+    !plan.source_integration_id
+  ) {
+    return { ok: false, message: "Este plan no viene de una tarea de ClickUp." };
+  }
+  const integ = await getIntegration(plan.source_integration_id);
+  const provider = integ ? getProvider(integ.type) : null;
+  if (!integ || !provider?.fetchTaskSeed) {
+    return { ok: false, message: "Proveedor ClickUp incompleto." };
+  }
+  const config = integ.config as unknown as Record<string, unknown>;
+  const seed = await provider.fetchTaskSeed(config, plan.source_external_id);
+  if (!seed) {
+    return {
+      ok: false,
+      message: "No se pudo leer la tarea en ClickUp (revisa el id o los permisos del token).",
+    };
+  }
+
+  const titleChanged = !!seed.title && seed.title !== plan.title;
+  const objectiveChanged = seed.objective !== plan.objective;
+  await updatePlan(planId, {
+    title: seed.title || plan.title,
+    objective: seed.objective,
+  });
+
+  // Best-effort: also pull any new images from the task.
+  let imgNote = "";
+  try {
+    const r = await importClickupAttachments(planId);
+    if (r.imported > 0) imgNote = ` ${r.imported} imagen(es) nueva(s).`;
+  } catch {
+    /* ignore */
+  }
+
+  const changes = [
+    titleChanged ? "título" : "",
+    objectiveChanged ? "objetivo" : "",
+  ].filter(Boolean);
+  const message = changes.length
+    ? `Actualizado desde ClickUp (${changes.join(" + ")}).${imgNote}`
+    : `Ya estaba al día con ClickUp.${imgNote}`;
+  const updated = await getPlan(planId);
+  return { ok: true, plan: updated ?? plan, message };
+}
+
 const SYNC_MARKER = "## 🦁 Requerimiento refinado por Leo";
 
 /**
@@ -387,6 +448,35 @@ export async function cancelPlan(planId: number): Promise<Plan | null> {
     scheduled_for: null,
     error: null,
   });
+}
+
+/**
+ * Delete a plan from ANY stage, cleaning up first: kill an in-flight refinement,
+ * stop any running step runs, then remove the plan and its children.
+ */
+export async function deletePlanFully(planId: number): Promise<void> {
+  const plan = await getPlanWithSteps(planId);
+  if (!plan) {
+    await deletePlan(planId);
+    return;
+  }
+  if (plan.status === "refining") stopRefinement(planId);
+  for (const s of plan.steps) {
+    if (s.status === "running" && s.task_id) {
+      try {
+        const runs = await listRuns({
+          task_id: s.task_id,
+          status: "running",
+          limit: 1,
+        });
+        if (runs[0]) stopRun(runs[0].id);
+        await setTaskStatus(s.task_id, "cancelled");
+      } catch {
+        /* best-effort */
+      }
+    }
+  }
+  await deletePlan(planId);
 }
 
 /** The ClickUp status that this project's *development* source listens to. */

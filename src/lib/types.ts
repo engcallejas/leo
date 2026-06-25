@@ -184,6 +184,16 @@ export interface Run {
   finished_at: string | null;
 }
 
+/** A steering note the human pushes to a running run; the agent pulls it at a checkpoint. */
+export interface RunNote {
+  id: number;
+  run_id: number;
+  text: string;
+  delivered: boolean;
+  created_at: string;
+  delivered_at: string | null;
+}
+
 /** A question/approval Claude raised mid-run, awaiting a human answer in the UI. */
 export interface RunInteraction {
   id: number;

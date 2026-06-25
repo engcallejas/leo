@@ -80,6 +80,7 @@ export function buildRunExtras(opts: {
         LEO_BASE_URL: leoBaseUrl(),
         LEO_RUN_ID: String(interactiveRunId),
         LEO_INTERACTIONS_PATH: `/api/runs/${interactiveRunId}/interactions`,
+        LEO_NOTES_PATH: `/api/runs/${interactiveRunId}/notes/consume`,
       }
     : interactivePlanId
       ? {

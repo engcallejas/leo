@@ -143,6 +143,10 @@ export async function updatePlan(
 }
 
 export async function deletePlan(id: number): Promise<void> {
+  // Explicit child cleanup (FK cascade isn't reliably enforced on this client).
+  await run("DELETE FROM plan_steps WHERE plan_id = ?", [id]);
+  await run("DELETE FROM plan_attachments WHERE plan_id = ?", [id]);
+  await run("DELETE FROM run_interactions WHERE plan_id = ?", [id]);
   await run("DELETE FROM plans WHERE id = ?", [id]);
 }
 

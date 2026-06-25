@@ -37,6 +37,20 @@ export function refinementActive(planId: number): boolean {
   return refinePids.has(planId);
 }
 
+/** Kill a plan's in-flight refinement process (if any) and stop watching it. */
+export function stopRefinement(planId: number): void {
+  const pid = refinePids.get(planId);
+  if (pid) {
+    try {
+      process.kill(pid, "SIGTERM");
+    } catch {
+      /* already gone */
+    }
+  }
+  refinePids.delete(planId);
+  refineWatched.delete(planId);
+}
+
 function isAlive(pid: number | undefined): boolean {
   if (!pid) return false;
   try {

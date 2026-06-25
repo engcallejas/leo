@@ -18,6 +18,9 @@ const RUN_ID = process.env.LEO_RUN_ID || "";
 // endpoints are keyed by interaction id, so they work the same for both.
 const CREATE_PATH =
   process.env.LEO_INTERACTIONS_PATH || `/api/runs/${RUN_ID}/interactions`;
+// Endpoint the check_in tool pulls human steering notes from (dev runs only).
+const NOTES_PATH =
+  process.env.LEO_NOTES_PATH || (RUN_ID ? `/api/runs/${RUN_ID}/notes/consume` : "");
 const POLL_MS = 1500;
 const TIMEOUT_MS = 30 * 60 * 1000; // 30 min
 
@@ -98,6 +101,12 @@ const TOOLS = [
       required: ["action"],
     },
   },
+  {
+    name: "check_in",
+    description:
+      "Check for steering notes the human pushed while you work. Call this PROACTIVELY at checkpoints — before committing, before opening a PR, when finishing a logical chunk, and whenever you'd otherwise proceed on an assumption. It's cheap and non-blocking: it returns any new human instructions to incorporate (or says there are none), so you can course-correct without redoing work.",
+    inputSchema: { type: "object", properties: {} },
+  },
 ];
 
 async function handleToolCall(name, argsObj) {
@@ -114,6 +123,22 @@ async function handleToolCall(name, argsObj) {
     const q = a.detail ? `${a.action}\n\n${a.detail}` : String(a.action || "");
     const id = await createInteraction("approval", q, ["approved", "denied"]);
     return await waitForAnswer(id);
+  }
+  if (name === "check_in") {
+    if (!NOTES_PATH) return "No hay buzón de notas para este run.";
+    try {
+      const res = await fetch(`${BASE}${NOTES_PATH}`, { method: "POST" });
+      if (!res.ok) return "(no se pudo consultar el buzón de notas)";
+      const body = await res.json();
+      const notes = Array.isArray(body.notes) ? body.notes : [];
+      if (!notes.length) return "No hay notas nuevas del humano. Continúa.";
+      return (
+        "NOTAS NUEVAS DEL HUMANO (incorpóralas a tu trabajo en curso):\n" +
+        notes.map((n, i) => `${i + 1}. ${n}`).join("\n")
+      );
+    } catch (e) {
+      return `(error consultando el buzón: ${e.message})`;
+    }
   }
   throw new Error(`unknown tool ${name}`);
 }

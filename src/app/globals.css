@@ -202,6 +202,19 @@ a {
   color: var(--text);
 }
 
+summary {
+  list-style: none;
+}
+summary::-webkit-details-marker {
+  display: none;
+}
+.md > :first-child {
+  margin-top: 0;
+}
+.md > :last-child {
+  margin-bottom: 0;
+}
+
 .muted {
   color: var(--muted);
 }
