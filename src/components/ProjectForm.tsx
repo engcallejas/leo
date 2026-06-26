@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { api } from "@/components/client";
 import { FolderPicker } from "@/components/FolderPicker";
 import { McpEditor } from "@/components/McpEditor";
 import { ModelInput } from "@/components/ModelInput";
@@ -23,6 +24,7 @@ import type {
 
 export type Draft = {
   id?: number;
+  base_project_id: number | null;
   name: string;
   repo_path: string;
   base_branch: string;
@@ -47,6 +49,7 @@ export type Draft = {
 
 export function emptyDraft(): Draft {
   return {
+    base_project_id: null,
     name: "",
     repo_path: "",
     base_branch: "main",
@@ -74,6 +77,7 @@ export function emptyDraft(): Draft {
 export function projectToDraft(p: Project): Draft {
   return {
     id: p.id,
+    base_project_id: p.base_project_id,
     name: p.name,
     repo_path: p.repo_path,
     base_branch: p.base_branch,
@@ -99,6 +103,7 @@ export function projectToDraft(p: Project): Draft {
 
 export function draftToBody(draft: Draft) {
   return {
+    base_project_id: draft.base_project_id,
     name: draft.name,
     repo_path: draft.repo_path,
     base_branch: draft.base_branch,
@@ -148,8 +153,19 @@ export function ProjectForm({
 }) {
   const [picker, setPicker] = useState(false);
   const [tab, setTab] = useState<TabKey>("general");
+  const [projects, setProjects] = useState<Project[]>([]);
   const set = <K extends keyof Draft>(k: K, v: Draft[K]) =>
     setDraft({ ...draft, [k]: v });
+
+  // Other projects in the active account, for the inheritance base picker.
+  useEffect(() => {
+    api
+      .get("/api/projects")
+      .then((all: Project[]) => setProjects(all))
+      .catch(() => {});
+  }, []);
+  const baseChoices = projects.filter((p) => p.id !== draft.id);
+  const baseProject = projects.find((p) => p.id === draft.base_project_id) ?? null;
 
   return (
     <div>
@@ -230,6 +246,32 @@ export function ProjectForm({
             />
 
             <div className="span-2">
+              <label className="label">Proyecto base (heredar de)</label>
+              <select
+                className="select"
+                value={draft.base_project_id ?? ""}
+                onChange={(e) =>
+                  set(
+                    "base_project_id",
+                    e.target.value ? Number(e.target.value) : null,
+                  )
+                }
+              >
+                <option value="">Sin herencia</option>
+                {baseChoices.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name}
+                  </option>
+                ))}
+              </select>
+              <div className="hint">
+                Los campos de ejecución que dejes vacíos (modelo, tools, hooks,
+                specs, MCPs, auth…) se heredan de este proyecto. Los datos del
+                repo (ruta, branches, fuentes) nunca se heredan.
+              </div>
+            </div>
+
+            <div className="span-2">
               <label className="label">Reglas del proyecto (prompt)</label>
               <textarea
                 className="textarea"
@@ -285,8 +327,13 @@ export function ProjectForm({
                 <ModelInput
                   value={draft.model}
                   onChange={(v) => set("model", v)}
-                  placeholder="(usar el global)"
+                  placeholder="(heredar / usar el de la cuenta)"
                 />
+                {!draft.model.trim() && baseProject?.model && (
+                  <div className="hint">
+                    Heredado de «{baseProject.name}»: <code>{baseProject.model}</code>
+                  </div>
+                )}
               </div>
               <div className="span-2">
                 <label className="label">Autenticación del modelo</label>
@@ -297,7 +344,7 @@ export function ProjectForm({
                     set("auth_method", e.target.value as ProjectAuthMethod)
                   }
                 >
-                  <option value="inherit">Heredar del global (Ajustes)</option>
+                  <option value="inherit">Heredar (cuenta o proyecto base)</option>
                   <option value="subscription">Suscripción de Claude</option>
                   <option value="api-key">API key de Anthropic</option>
                 </select>

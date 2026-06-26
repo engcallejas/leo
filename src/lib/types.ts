@@ -33,8 +33,20 @@ export type TaskStatus =
 
 export type RunStatus = "running" | "done" | "failed" | "cancelled";
 
+/** A workspace that groups projects with fully isolated integrations + engine/auth config. */
+export interface Account {
+  id: number;
+  name: string;
+  /** Accent color for the switcher chip (hex). */
+  color: string;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface Integration {
   id: number;
+  /** The account this connection belongs to (full isolation between accounts). */
+  account_id: number;
   type: IntegrationType;
   name: string;
   /** Connection config. Tokens live here (plain text — local only). */
@@ -108,6 +120,10 @@ export interface ClickUpSourceFilter {
 
 export interface Project {
   id: number;
+  /** The account this project belongs to. */
+  account_id: number;
+  /** Optional template project to inherit unset config fields from. */
+  base_project_id: number | null;
   name: string;
   repo_path: string;
   base_branch: string;

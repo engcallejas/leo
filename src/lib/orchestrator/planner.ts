@@ -15,7 +15,11 @@ import {
   replaceSteps,
   updatePlan,
 } from "../plan-repo";
-import { cancelPlanInteractions, getIntegration, getProject } from "../repo";
+import {
+  cancelPlanInteractions,
+  getIntegration,
+  getResolvedProject,
+} from "../repo";
 import { getSettings } from "../settings";
 import { buildSpecContext, detectSpecFramework, type SpecFramework } from "../specs";
 import type { Plan, Project, RefineResult } from "../types";
@@ -374,7 +378,7 @@ export async function startRefinement(planId: number): Promise<Plan> {
   if (!plan) throw new Error("Plan no encontrado");
   if (plan.status === "refining" || refinePids.has(planId)) return plan;
 
-  const project = await getProject(plan.project_id);
+  const project = await getResolvedProject(plan.project_id);
   if (!project) throw new Error("Proyecto no encontrado");
 
   if (!fs.existsSync(project.repo_path)) {
@@ -391,7 +395,7 @@ export async function startRefinement(planId: number): Promise<Plan> {
     }))!;
   }
 
-  const settings = await getSettings();
+  const settings = await getSettings(project.account_id);
   const exec = await resolveProjectExec(project);
   const seedContext = await fetchSeedContext(plan);
   const specContext = buildSpecContext(project, true);
@@ -447,7 +451,11 @@ export async function startRefinement(planId: number): Promise<Plan> {
   try {
     child = spawn(settings.claude_binary_path, args, {
       cwd: project.repo_path,
-      env: await buildClaudeEnv({ method: exec.method, apiKey: exec.apiKey }),
+      env: await buildClaudeEnv({
+        accountId: project.account_id,
+        method: exec.method,
+        apiKey: exec.apiKey,
+      }),
       detached: true,
       stdio: ["ignore", out, out],
     });

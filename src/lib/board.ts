@@ -5,8 +5,16 @@
 
 import { query } from "./db";
 import { listPlans } from "./plan-repo";
-import { listProjects, listRuns, listTasks } from "./repo";
-import type { BoardCard, BoardColumn, Plan, RunStatus, Task } from "./types";
+import { getProject, listProjects, listRuns, listTasks } from "./repo";
+import type {
+  BoardCard,
+  BoardColumn,
+  Plan,
+  Project,
+  Run,
+  RunStatus,
+  Task,
+} from "./types";
 
 interface StepLite {
   plan_id: number;
@@ -75,16 +83,33 @@ function subForPlan(p: Plan, total: number, done: number): string | null {
 }
 
 /**
- * Build the full board (all cards, unfiltered — the UI filters client-side by
- * project / source / date). Cards are sorted by recency within the response.
+ * Build the board scoped to a single project (the active view scope), or to a
+ * whole account, or unscoped. Cards are sorted by recency within the response.
  */
-export async function assembleBoard(): Promise<BoardCard[]> {
-  const [projects, plans, tasks, runs] = await Promise.all([
-    listProjects(),
-    listPlans({ limit: 500 }),
-    listTasks({ limit: 1000 }),
-    listRuns({ limit: 500 }),
-  ]);
+export async function assembleBoard(
+  opts: { projectId?: number | null; accountId?: number } = {},
+): Promise<BoardCard[]> {
+  const { projectId, accountId } = opts;
+  let projects: Project[];
+  let plans: Plan[];
+  let tasks: Task[];
+  let runs: Run[];
+  if (projectId != null) {
+    const proj = await getProject(projectId);
+    projects = proj ? [proj] : [];
+    [plans, tasks, runs] = await Promise.all([
+      listPlans({ project_id: projectId, limit: 500 }),
+      listTasks({ project_id: projectId, limit: 1000 }),
+      listRuns({ project_id: projectId, limit: 500 }),
+    ]);
+  } else {
+    [projects, plans, tasks, runs] = await Promise.all([
+      listProjects(accountId),
+      listPlans({ account_id: accountId, limit: 500 }),
+      listTasks({ account_id: accountId, limit: 1000 }),
+      listRuns({ account_id: accountId, limit: 500 }),
+    ]);
+  }
   const projName = new Map(projects.map((p) => [p.id, p.name]));
 
   // All plan steps in a single query (progress + which tasks belong to a plan).

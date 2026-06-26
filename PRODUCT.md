@@ -26,6 +26,25 @@ back to the source) → Planeación (technical refinement) → Cola (work queue)
 Ejecución (live run) → Revisión (close or iterate) → Cerrada. Cards drag to
 advance one legal step at a time; heavy steps (run, cancel) confirm first.
 
+## Cuentas (workspaces)
+
+Leo operates inside one **active account** at a time, chosen from the switcher at
+the top of the sidebar. An account is a fully isolated workspace that **groups
+several projects (repos)** and owns its own integrations (ClickUp/Sentry tokens)
+and engine/auth config (concurrency, auto-run, binary, auth method, API key,
+default model). Switching accounts re-scopes every view (Tablero, Planeación,
+Ejecuciones, Dashboard) but **never stops work in another account** — the
+scheduler runs every account in the background regardless of which one is on
+screen. Within an account the views keep a per-project filter.
+
+The unified **Cuenta** page collects the account's Proyectos, Integraciones and
+Motor & Auth, plus account identity (name/color, delete). A project can **inherit
+its config from a base project** (template): execution fields left empty (model,
+tools, hooks, specs, MCPs, auth) fall through to the base; repo identity (path,
+branches, sources) never inherits. Honest constraint: the Claude **subscription
+login is machine-wide** (one per machine), so per-account auth isolation is full
+for API key / model / token but the subscription session is shared.
+
 ## Brand Personality
 
 Precise, calm, operator-grade. A control room, not a toy. Confident and quiet:

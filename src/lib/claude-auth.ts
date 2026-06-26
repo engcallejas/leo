@@ -1,6 +1,8 @@
 import { spawn } from "child_process";
 import fs from "fs";
+import { getActiveAccountId } from "./account-repo";
 import { query, run } from "./db";
+import { getResolvedProject } from "./repo";
 import { getSettings } from "./settings";
 import type { AuthMethod, ExecConfig, Project } from "./types";
 
@@ -44,92 +46,118 @@ const g = globalThis as unknown as {
   __leoAuthCache?: { value: AuthStatus; at: number };
 };
 
-// ---------- token storage ----------
-export async function getStoredToken(): Promise<string | null> {
+// ---------- token storage (per account) ----------
+export async function getStoredToken(accountId: number): Promise<string | null> {
   const rows = await query<{ value: string }>(
-    "SELECT value FROM settings WHERE key = ?",
-    [TOKEN_KEY],
+    "SELECT value FROM settings WHERE account_id = ? AND key = ?",
+    [accountId, TOKEN_KEY],
   );
   const v = rows[0]?.value?.trim();
   return v || null;
 }
 
-export async function setStoredToken(token: string): Promise<void> {
-  await run(
-    "INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-    [TOKEN_KEY, token.trim()],
-  );
+export async function setStoredToken(
+  accountId: number,
+  token: string,
+): Promise<void> {
+  await putSetting(accountId, TOKEN_KEY, token.trim());
   g.__leoAuthCache = undefined; // invalidate
 }
 
-export async function clearStoredToken(): Promise<void> {
-  await run("DELETE FROM settings WHERE key = ?", [TOKEN_KEY]);
+export async function clearStoredToken(accountId: number): Promise<void> {
+  await run("DELETE FROM settings WHERE account_id = ? AND key = ?", [
+    accountId,
+    TOKEN_KEY,
+  ]);
   g.__leoAuthCache = undefined;
 }
 
-// ---------- exec config (global model/auth defaults) ----------
+// ---------- exec config (per-account model/auth defaults) ----------
 const METHOD_KEY = "anthropic_auth_method";
 const APIKEY_KEY = "anthropic_api_key";
 const MODEL_KEY = "default_model";
 
-async function getSetting(key: string): Promise<string | null> {
+async function getSetting(
+  accountId: number,
+  key: string,
+): Promise<string | null> {
   const rows = await query<{ value: string }>(
-    "SELECT value FROM settings WHERE key = ?",
-    [key],
+    "SELECT value FROM settings WHERE account_id = ? AND key = ?",
+    [accountId, key],
   );
   return rows[0]?.value ?? null;
 }
-async function putSetting(key: string, value: string): Promise<void> {
+async function putSetting(
+  accountId: number,
+  key: string,
+  value: string,
+): Promise<void> {
   await run(
-    "INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-    [key, value],
+    "INSERT INTO settings (account_id, key, value) VALUES (?, ?, ?) ON CONFLICT(account_id, key) DO UPDATE SET value = excluded.value",
+    [accountId, key, value],
   );
 }
 
-export async function getAnthropicApiKey(): Promise<string | null> {
-  const v = (await getSetting(APIKEY_KEY))?.trim();
+export async function getAnthropicApiKey(
+  accountId: number,
+): Promise<string | null> {
+  const v = (await getSetting(accountId, APIKEY_KEY))?.trim();
   return v || process.env.ANTHROPIC_API_KEY || null;
 }
 
-export async function getExecConfig(): Promise<ExecConfig> {
-  const method = (await getSetting(METHOD_KEY)) as AuthMethod | null;
-  const key = await getAnthropicApiKey();
+export async function getExecConfig(accountId: number): Promise<ExecConfig> {
+  const method = (await getSetting(accountId, METHOD_KEY)) as AuthMethod | null;
+  const key = await getAnthropicApiKey(accountId);
   return {
     method: method === "api-key" ? "api-key" : "subscription",
     apiKeySet: !!key,
-    defaultModel: (await getSetting(MODEL_KEY)) ?? "",
+    defaultModel: (await getSetting(accountId, MODEL_KEY)) ?? "",
   };
 }
 
-export async function setExecConfig(patch: {
-  method?: AuthMethod;
-  defaultModel?: string;
-  apiKey?: string | null;
-}): Promise<ExecConfig> {
-  if (patch.method) await putSetting(METHOD_KEY, patch.method);
+export async function setExecConfig(
+  accountId: number,
+  patch: {
+    method?: AuthMethod;
+    defaultModel?: string;
+    apiKey?: string | null;
+  },
+): Promise<ExecConfig> {
+  if (patch.method) await putSetting(accountId, METHOD_KEY, patch.method);
   if (patch.defaultModel !== undefined)
-    await putSetting(MODEL_KEY, patch.defaultModel.trim());
+    await putSetting(accountId, MODEL_KEY, patch.defaultModel.trim());
   if (patch.apiKey !== undefined) {
-    if (patch.apiKey) await putSetting(APIKEY_KEY, patch.apiKey.trim());
-    else await run("DELETE FROM settings WHERE key = ?", [APIKEY_KEY]);
+    if (patch.apiKey) await putSetting(accountId, APIKEY_KEY, patch.apiKey.trim());
+    else
+      await run("DELETE FROM settings WHERE account_id = ? AND key = ?", [
+        accountId,
+        APIKEY_KEY,
+      ]);
   }
   g.__leoAuthCache = undefined;
-  return getExecConfig();
+  return getExecConfig(accountId);
 }
 
-/** Effective auth method + model + key for a given project. */
+/**
+ * Effective auth method + model + key for a project. Resolves the project→base
+ * inheritance chain first (so an inherited model/auth_method is honored), then
+ * falls back to the project's *account* exec config.
+ */
 export async function resolveProjectExec(project: Project): Promise<{
   method: AuthMethod;
   apiKey: string | null;
   model: string | null;
 }> {
-  const cfg = await getExecConfig();
+  const resolved = (await getResolvedProject(project.id)) ?? project;
+  const accountId = resolved.account_id;
+  const cfg = await getExecConfig(accountId);
   const method: AuthMethod =
-    project.auth_method === "inherit" ? cfg.method : project.auth_method;
+    resolved.auth_method === "inherit" ? cfg.method : resolved.auth_method;
   return {
     method,
-    apiKey: method === "api-key" ? await getAnthropicApiKey() : null,
-    model: (project.model && project.model.trim()) || cfg.defaultModel || null,
+    apiKey: method === "api-key" ? await getAnthropicApiKey(accountId) : null,
+    model:
+      (resolved.model && resolved.model.trim()) || cfg.defaultModel || null,
   };
 }
 
@@ -163,22 +191,25 @@ export async function assertRunnable(
  * and injects the OAuth token. For api-key: sets ANTHROPIC_API_KEY.
  */
 export async function buildClaudeEnv(opts?: {
+  accountId?: number;
   method?: AuthMethod;
   apiKey?: string | null;
   extra?: Record<string, string>;
 }): Promise<NodeJS.ProcessEnv> {
+  const accountId = opts?.accountId ?? (await getActiveAccountId());
   const env: NodeJS.ProcessEnv = { ...process.env };
   delete env.ANTHROPIC_AUTH_TOKEN;
   env.FORCE_COLOR = "0";
 
   if (opts?.method === "api-key") {
-    const key = opts.apiKey ?? (await getAnthropicApiKey());
+    const key = opts.apiKey ?? (await getAnthropicApiKey(accountId));
     if (key) env.ANTHROPIC_API_KEY = key;
     delete env.CLAUDE_CODE_OAUTH_TOKEN;
   } else {
     // subscription
     delete env.ANTHROPIC_API_KEY;
-    const token = (await getStoredToken()) || process.env.CLAUDE_CODE_OAUTH_TOKEN;
+    const token =
+      (await getStoredToken(accountId)) || process.env.CLAUDE_CODE_OAUTH_TOKEN;
     if (token) env.CLAUDE_CODE_OAUTH_TOKEN = token;
   }
 
@@ -193,9 +224,9 @@ const CURATED_MODELS = [
 ];
 
 /** Models for the dropdown: live from Anthropic if an API key is set, else curated. */
-export async function listModels(): Promise<string[]> {
+export async function listModels(accountId: number): Promise<string[]> {
   const ids = new Set(CURATED_MODELS);
-  const key = await getAnthropicApiKey();
+  const key = await getAnthropicApiKey(accountId);
   if (key) {
     try {
       const res = await fetch("https://api.anthropic.com/v1/models?limit=100", {
@@ -214,9 +245,10 @@ export async function listModels(): Promise<string[]> {
 
 /** Validate an Anthropic API key against the models endpoint. */
 export async function testApiKey(
+  accountId: number,
   key?: string,
 ): Promise<{ ok: boolean; message: string }> {
-  const k = key?.trim() || (await getAnthropicApiKey());
+  const k = key?.trim() || (await getAnthropicApiKey(accountId));
   if (!k) return { ok: false, message: "No hay API key configurada." };
   try {
     const res = await fetch("https://api.anthropic.com/v1/models?limit=1", {
@@ -244,8 +276,9 @@ export async function execClaude(
   args: string[],
   timeoutMs = 20000,
 ): Promise<ExecResult> {
-  const settings = await getSettings();
-  const env = await buildClaudeEnv();
+  const accountId = await getActiveAccountId();
+  const settings = await getSettings(accountId);
+  const env = await buildClaudeEnv({ accountId });
   return new Promise<ExecResult>((resolve) => {
     let child;
     try {
@@ -306,7 +339,7 @@ export async function getAuthStatus(force = false): Promise<AuthStatus> {
     return g.__leoAuthCache.value;
   }
 
-  const stored = await getStoredToken();
+  const stored = await getStoredToken(await getActiveAccountId());
   const hasStoredToken = !!(stored || process.env.CLAUDE_CODE_OAUTH_TOKEN);
 
   const res = await execClaude(["auth", "status", "--json"], 20000);

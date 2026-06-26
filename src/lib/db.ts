@@ -85,6 +85,56 @@ async function relaxInteractionsRunId(db: Client): Promise<void> {
   `);
 }
 
+/**
+ * Settings became per-account: the primary key moved from (key) to
+ * (account_id, key). Older DBs have a plain (key) PK; SQLite can't alter a PK
+ * in place, so rebuild through a temp table once. Existing rows already carry
+ * account_id = 1 (the ADD COLUMN default), so they land under the default
+ * account. Idempotent: a no-op once account_id is part of the PK.
+ */
+async function ensureSettingsAccountPk(db: Client): Promise<void> {
+  const info = await db.execute("PRAGMA table_info(settings)");
+  const acct = info.rows.find(
+    (r) => (r as { name?: string }).name === "account_id",
+  ) as { pk?: number } | undefined;
+  if (acct && Number(acct.pk) > 0) return; // already composite-keyed
+  await db.executeMultiple(`
+    BEGIN;
+    CREATE TABLE settings_new (
+      account_id INTEGER NOT NULL DEFAULT 1,
+      key        TEXT NOT NULL,
+      value      TEXT NOT NULL,
+      PRIMARY KEY (account_id, key)
+    );
+    INSERT INTO settings_new (account_id, key, value)
+      SELECT account_id, key, value FROM settings;
+    DROP TABLE settings;
+    ALTER TABLE settings_new RENAME TO settings;
+    COMMIT;
+  `);
+}
+
+/**
+ * Seed the default account (id 1, "Personal") if no accounts exist, and point
+ * the active-account pointer at it. All pre-existing projects/integrations/
+ * settings already default to account_id = 1, so the current install simply
+ * becomes the "Personal" account with nothing lost.
+ */
+async function bootstrapDefaultAccount(db: Client): Promise<void> {
+  const count = await db.execute("SELECT COUNT(*) AS n FROM accounts");
+  const n = Number((count.rows[0] as { n?: number }).n ?? 0);
+  if (n === 0) {
+    await db.execute({
+      sql: "INSERT INTO accounts (id, name, color) VALUES (1, 'Personal', '#6366f1')",
+      args: [],
+    });
+  }
+  await db.execute({
+    sql: "INSERT INTO app_state (key, value) VALUES ('active_account_id', '1') ON CONFLICT(key) DO NOTHING",
+    args: [],
+  });
+}
+
 const DEFAULT_SETTINGS: Record<string, string> = {
   poll_interval_seconds: "60",
   max_concurrent_runs: "2",
@@ -145,9 +195,30 @@ export function migrate(): Promise<void> {
       await db.execute(
         "CREATE INDEX IF NOT EXISTS idx_interactions_plan ON run_interactions(plan_id)",
       );
+      // Round 4: accounts (workspaces grouping projects, fully isolated). Add
+      // account_id to projects/integrations/settings, a base_project_id template
+      // link, move settings to a per-account composite PK, and seed the default
+      // account so the existing install keeps working unchanged.
+      await ensureColumn(db, "projects", "account_id", "INTEGER NOT NULL DEFAULT 1");
+      await ensureColumn(db, "projects", "base_project_id", "INTEGER");
+      await ensureColumn(
+        db,
+        "integrations",
+        "account_id",
+        "INTEGER NOT NULL DEFAULT 1",
+      );
+      await ensureColumn(db, "settings", "account_id", "INTEGER NOT NULL DEFAULT 1");
+      await ensureSettingsAccountPk(db);
+      await db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_projects_account ON projects(account_id)",
+      );
+      await db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_integrations_account ON integrations(account_id)",
+      );
+      await bootstrapDefaultAccount(db);
       for (const [key, value] of Object.entries(DEFAULT_SETTINGS)) {
         await db.execute({
-          sql: "INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO NOTHING",
+          sql: "INSERT INTO settings (account_id, key, value) VALUES (1, ?, ?) ON CONFLICT(account_id, key) DO NOTHING",
           args: [key, value],
         });
       }

@@ -51,6 +51,11 @@ tokens to a dark palette locally; everything inside re-themes automatically.
 - `Drawer` (`src/components/ui.tsx`) — right slide-in panel (`.drawer` + `.drawer-overlay` /
   `-head` / `-body`) for **detail + inline editing**. `useToast()` → `{ show, toast }` (`.toast`,
   `.toast.err`) for transient action feedback.
+- **Account switcher** (`.acct-trigger` / `.acct-menu` / `.acct-item` / `.acct-dot`) — pinned at
+  the top of the sidebar (dark scope), a workspace dropdown with a color dot per account and a
+  "Nueva cuenta" affordance. The unified **Cuenta** page uses `.acct-tabs` / `.acct-tab` (underline
+  tabs) for Proyectos / Integraciones / Motor & Auth / General. Switching an account reloads so
+  every (independently polling) view re-scopes cleanly.
 - Icons: `src/components/icons.tsx` (stroke SVGs). **No emoji as icons.**
 
 ## Layout principles

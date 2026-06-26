@@ -13,7 +13,7 @@ import {
   cancelRunInteractions,
   createRun,
   getIntegration,
-  getProject,
+  getResolvedProject,
   getRun,
   getTask,
   listRuns,
@@ -384,8 +384,12 @@ export async function compactSession(
   const gate = await assertRunnable(project);
   if (!gate.ok) return null;
   const exec = await resolveProjectExec(project);
-  const settings = await getSettings();
-  const env = await buildClaudeEnv({ method: exec.method, apiKey: exec.apiKey });
+  const settings = await getSettings(project.account_id);
+  const env = await buildClaudeEnv({
+    accountId: project.account_id,
+    method: exec.method,
+    apiKey: exec.apiKey,
+  });
   const args = [
     "-p",
     COMPACT_PROMPT,
@@ -446,7 +450,7 @@ export async function startRun(
   chain?: ChainContext,
   iteration?: IterationOpts,
 ): Promise<Run> {
-  const settings = await getSettings();
+  const settings = await getSettings(project.account_id);
 
   const runRow = await createRun({
     task_id: task.id,
@@ -612,7 +616,11 @@ export async function startRun(
   try {
     child = spawn(settings.claude_binary_path, args, {
       cwd: project.repo_path,
-      env: await buildClaudeEnv({ method: exec.method, apiKey: exec.apiKey }),
+      env: await buildClaudeEnv({
+        accountId: project.account_id,
+        method: exec.method,
+        apiKey: exec.apiKey,
+      }),
       detached: true,
       stdio: ["ignore", out, out],
     });
@@ -668,7 +676,7 @@ export async function iterateRun(
     throw new Error("El run aún está en ejecución; espera a que termine para iterar.");
   }
   const task = await getTask(parent.task_id);
-  const project = await getProject(parent.project_id);
+  const project = await getResolvedProject(parent.project_id);
   if (!task || !project) {
     throw new Error("La tarea o el proyecto de este run ya no existe.");
   }
@@ -714,7 +722,7 @@ export async function reconcileRunningRuns(): Promise<void> {
   const runs = await listRuns({ status: "running", limit: 1000 });
   for (const r of runs) {
     const task = await getTask(r.task_id);
-    const project = await getProject(r.project_id);
+    const project = await getResolvedProject(r.project_id);
     if (!task || !project) {
       await updateRun(r.id, {
         status: "failed",

@@ -84,6 +84,7 @@ export async function getPlanWithSteps(
 
 export async function listPlans(filter?: {
   project_id?: number;
+  account_id?: number;
   status?: PlanStatus;
   limit?: number;
 }): Promise<Plan[]> {
@@ -92,6 +93,10 @@ export async function listPlans(filter?: {
   if (filter?.project_id) {
     where.push("project_id = ?");
     args.push(filter.project_id);
+  }
+  if (filter?.account_id != null) {
+    where.push("project_id IN (SELECT id FROM projects WHERE account_id = ?)");
+    args.push(filter.account_id);
   }
   if (filter?.status) {
     where.push("status = ?");

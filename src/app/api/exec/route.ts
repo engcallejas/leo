@@ -1,13 +1,13 @@
-import { json, parse, serverError } from "@/lib/api";
+import { accountIdFrom, json, parse, serverError } from "@/lib/api";
 import { getExecConfig, setExecConfig } from "@/lib/claude-auth";
 import { z } from "zod";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-export async function GET() {
+export async function GET(req: Request) {
   try {
-    return json(await getExecConfig());
+    return json(await getExecConfig(await accountIdFrom(req)));
   } catch (e) {
     return serverError(e);
   }
@@ -23,7 +23,7 @@ export async function PUT(req: Request) {
   const p = await parse(req, schema);
   if ("error" in p) return p.error;
   try {
-    return json(await setExecConfig(p.data));
+    return json(await setExecConfig(await accountIdFrom(req), p.data));
   } catch (e) {
     return serverError(e);
   }

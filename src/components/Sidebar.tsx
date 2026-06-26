@@ -3,14 +3,13 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
+import { ProjectSwitcher } from "@/components/ProjectSwitcher";
 import {
   IconBoard,
-  IconBox,
   IconClipboard,
   IconGear,
   IconGrid,
   IconPlay,
-  IconPlug,
   LeoMark,
 } from "@/components/icons";
 import type { SVGProps } from "react";
@@ -27,17 +26,13 @@ const GROUPS: { label: string | null; items: NavItem[] }[] = [
     label: "Orquestación",
     items: [
       { href: "/board", label: "Tablero", Icon: IconBoard },
-      { href: "/projects", label: "Proyectos", Icon: IconBox },
       { href: "/plans", label: "Planeación", Icon: IconClipboard },
       { href: "/runs", label: "Ejecuciones", Icon: IconPlay },
     ],
   },
   {
     label: "Sistema",
-    items: [
-      { href: "/integrations", label: "Integraciones", Icon: IconPlug },
-      { href: "/settings", label: "Ajustes", Icon: IconGear },
-    ],
+    items: [{ href: "/account", label: "Cuenta", Icon: IconGear }],
   },
 ];
 
@@ -150,6 +145,11 @@ export function Sidebar() {
         </span>
       </div>
 
+      {/* Project switcher (the working scope) */}
+      <div style={{ marginTop: 10 }}>
+        <ProjectSwitcher />
+      </div>
+
       {/* Nav groups */}
       <nav style={{ display: "flex", flexDirection: "column", gap: 2, marginTop: 6 }}>
         {GROUPS.map((g, gi) => (
@@ -184,7 +184,7 @@ export function Sidebar() {
 
       {/* System status */}
       <Link
-        href="/settings"
+        href="/account"
         className="card"
         style={{ padding: "11px 13px", background: "var(--panel-2)", display: "block" }}
       >

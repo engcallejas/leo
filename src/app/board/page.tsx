@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useAccount } from "@/components/AccountProvider";
 import { api } from "@/components/client";
 import { CardDrawer, type CardAction } from "@/components/CardDrawer";
 import {
@@ -49,7 +50,6 @@ const SRC_LABEL: Record<string, string> = {
 export default function BoardPage() {
   const [cards, setCards] = useState<BoardCard[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
-  const [projectF, setProjectF] = useState<string>("all");
   const [sourceF, setSourceF] = useState<string>("all");
   const [dateF, setDateF] = useState<string>("all");
 
@@ -339,16 +339,15 @@ export default function BoardPage() {
     void doMove(card, target);
   };
 
-  // Apply filters once.
+  // Apply filters once. (The board is already scoped to the active project.)
   const visible = useMemo(() => {
     const days = presetDays(dateF);
     return cards.filter((c) => {
-      if (projectF !== "all" && String(c.project_id) !== projectF) return false;
       if (sourceF !== "all" && c.source_type !== sourceF) return false;
       if (!withinDate(c.date, days)) return false;
       return true;
     });
-  }, [cards, projectF, sourceF, dateF]);
+  }, [cards, sourceF, dateF]);
 
   const byColumn = (col: BoardColumn) => visible.filter((c) => c.column === col);
 
@@ -390,15 +389,6 @@ export default function BoardPage() {
           marginBottom: 16,
         }}
       >
-        <FilterSelect
-          label="Proyecto"
-          value={projectF}
-          onChange={setProjectF}
-          options={[
-            { value: "all", label: "Todos" },
-            ...projects.map((p) => ({ value: String(p.id), label: p.name })),
-          ]}
-        />
         <FilterSelect
           label="Fuente"
           value={sourceF}
@@ -510,8 +500,13 @@ function NewTaskDrawer({
   onClose: () => void;
   onCreated: (msg: string) => void;
 }) {
+  const { activeProjectId } = useAccount();
   const [projectId, setProjectId] = useState(
-    projects[0]?.id != null ? String(projects[0].id) : "",
+    activeProjectId != null
+      ? String(activeProjectId)
+      : projects[0]?.id != null
+        ? String(projects[0].id)
+        : "",
   );
   const [title, setTitle] = useState("");
   const [desc, setDesc] = useState("");

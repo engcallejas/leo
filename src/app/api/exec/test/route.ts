@@ -1,4 +1,4 @@
-import { json } from "@/lib/api";
+import { accountIdFrom, json } from "@/lib/api";
 import { testApiKey } from "@/lib/claude-auth";
 
 export const runtime = "nodejs";
@@ -12,5 +12,5 @@ export async function POST(req: Request) {
   } catch {
     /* use stored key */
   }
-  return json(await testApiKey(key));
+  return json(await testApiKey(await accountIdFrom(req), key));
 }

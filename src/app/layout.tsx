@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Fraunces, JetBrains_Mono, Plus_Jakarta_Sans } from "next/font/google";
 import "./globals.css";
+import { AccountProvider } from "@/components/AccountProvider";
 import { AuthBanner } from "@/components/AuthBanner";
 import { Sidebar } from "@/components/Sidebar";
 import { boot } from "@/lib/boot";
@@ -40,13 +41,15 @@ export default function RootLayout({
       className={`${sans.variable} ${serif.variable} ${mono.variable}`}
     >
       <body>
-        <div style={{ display: "flex", minHeight: "100vh" }}>
-          <Sidebar />
-          <main style={{ flex: 1, minWidth: 0, padding: "28px 32px" }}>
-            <AuthBanner />
-            {children}
-          </main>
-        </div>
+        <AccountProvider>
+          <div style={{ display: "flex", minHeight: "100vh" }}>
+            <Sidebar />
+            <main style={{ flex: 1, minWidth: 0, padding: "28px 32px" }}>
+              <AuthBanner />
+              {children}
+            </main>
+          </div>
+        </AccountProvider>
       </body>
     </html>
   );

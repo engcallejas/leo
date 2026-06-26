@@ -16,7 +16,7 @@ import {
 } from "../plan-repo";
 import {
   getIntegration,
-  getProject,
+  getResolvedProject,
   getTask,
   listRuns,
   setTaskStatus,
@@ -75,7 +75,7 @@ export async function pushPlanToClickUp(
 ): Promise<{ ok: boolean; message: string; created: number }> {
   const plan = await getPlanWithSteps(planId);
   if (!plan) return { ok: false, message: "Plan no encontrado", created: 0 };
-  const project = await getProject(plan.project_id);
+  const project = await getResolvedProject(plan.project_id);
   if (!project) return { ok: false, message: "Proyecto no encontrado", created: 0 };
 
   const cu = await resolveClickUp(plan, project);
@@ -331,7 +331,7 @@ export async function syncPlanToClickUp(
   if (!plan.refined_spec.trim() && plan.steps.length === 0) {
     return { ok: false, message: "Refina el plan antes de sincronizar." };
   }
-  const project = await getProject(plan.project_id);
+  const project = await getResolvedProject(plan.project_id);
   if (!project) return { ok: false, message: "Proyecto no encontrado" };
 
   const cu = await resolveClickUp(plan, project);
@@ -500,7 +500,7 @@ export async function movePlanToDevStatus(
 ): Promise<{ ok: boolean; message: string; status?: string }> {
   const plan = await getPlanWithSteps(planId);
   if (!plan) return { ok: false, message: "Plan no encontrado" };
-  const project = await getProject(plan.project_id);
+  const project = await getResolvedProject(plan.project_id);
   if (!project) return { ok: false, message: "Proyecto no encontrado" };
 
   const taskId =
@@ -567,7 +567,7 @@ export async function syncDispatchedPlan(planId: number): Promise<{
       message: "El plan no tiene una tarea ClickUp asociada.",
     };
   }
-  const project = await getProject(plan.project_id);
+  const project = await getResolvedProject(plan.project_id);
   if (!project) return { ok: false, completed: false, message: "Proyecto no encontrado" };
   const cu = await resolveClickUp(plan, project);
   if (!cu) return { ok: false, completed: false, message: "Sin configuración ClickUp." };
@@ -788,7 +788,7 @@ async function advancePlan(plan: Plan): Promise<void> {
     }
     return;
   }
-  const project = await getProject(plan.project_id);
+  const project = await getResolvedProject(plan.project_id);
   if (!project || !project.enabled) return; // can't run; leave queued
   await dispatchStep(plan, next, fresh);
 }

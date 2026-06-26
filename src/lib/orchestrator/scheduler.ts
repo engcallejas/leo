@@ -1,8 +1,9 @@
+import { listAccounts } from "../account-repo";
 import { assertRunnable } from "../claude-auth";
 import { getProvider } from "../integrations";
 import {
   claimTaskForRun,
-  getProject,
+  getResolvedProject,
   getTask,
   listIntegrations,
   listProjects,
@@ -15,7 +16,7 @@ import {
   upsertTask,
 } from "../repo";
 import { getSettings } from "../settings";
-import type { IntegrationType, Project, Run } from "../types";
+import type { AppSettings, IntegrationType, Project, Run } from "../types";
 import { chainTick, startTaskOrChain } from "./chain-runner";
 import { planTick } from "./plan-runner";
 import { reconcileRefinements } from "./planner";
@@ -145,27 +146,41 @@ async function pollAll(
   return { sourcesPolled, pruned };
 }
 
-/** Start runs for eligible tasks, bounded by max_concurrent_runs. */
+/**
+ * Start runs for eligible tasks. Concurrency is capped PER ACCOUNT (each
+ * account has its own max_concurrent_runs and auto_run switch), so accounts run
+ * independently — one account being busy never starves another. Per-project
+ * sequentiality still holds (no two runs for the same repo at once).
+ */
 async function enqueueDue(): Promise<number> {
-  const settings = await getSettings();
-  const max = settings.max_concurrent_runs;
-  if (activeRunCount() >= max) return 0;
+  const accounts = await listAccounts();
+  const settingsByAccount = new Map<number, AppSettings>();
+  for (const a of accounts) settingsByAccount.set(a.id, await getSettings(a.id));
+  const maxFor = (acc: number) =>
+    settingsByAccount.get(acc)?.max_concurrent_runs ?? 2;
+  const autoFor = (acc: number) =>
+    settingsByAccount.get(acc)?.auto_run_enabled ?? false;
 
   const projects = await listProjects();
   const projById = new Map(projects.map((p) => [p.id, p]));
 
-  // Per-project sequential: never run two runs for the same project/repo at
-  // once (avoids git working-tree conflicts; makes a project's tasks run
-  // one-by-one).
+  // Running runs → per-project sequential (busyProjects) + per-account active
+  // counts (so each account is capped by its own max_concurrent_runs).
   const runningRuns = await listRuns({ status: "running", limit: 1000 });
   const busyProjects = new Set(runningRuns.map((r) => r.project_id));
+  const active = new Map<number, number>(); // accountId -> running run count
+  for (const r of runningRuns) {
+    const acc = projById.get(r.project_id)?.account_id;
+    if (acc != null) active.set(acc, (active.get(acc) ?? 0) + 1);
+  }
   const now = Date.now();
   const due = (iso: string | null) =>
     !iso || new Date(iso).getTime() <= now;
 
   let started = 0;
   const tryStart = async (taskId: number, proj: Project) => {
-    if (activeRunCount() >= max) return;
+    const acc = proj.account_id;
+    if ((active.get(acc) ?? 0) >= maxFor(acc)) return; // account at capacity
     if (busyProjects.has(proj.id)) return; // sequential per project
     const gate = await assertRunnable(proj);
     if (!gate.ok) {
@@ -174,6 +189,7 @@ async function enqueueDue(): Promise<number> {
     }
     if (await claimTaskForRun(taskId)) {
       busyProjects.add(proj.id);
+      active.set(acc, (active.get(acc) ?? 0) + 1);
       await safeStart(taskId, proj.id);
       started++;
     }
@@ -182,33 +198,30 @@ async function enqueueDue(): Promise<number> {
   // 1) Explicitly queued tasks (user pressed Encolar/Run) — any project.
   const queued = await listTasks({ status: "queued", limit: 200 });
   for (const t of queued) {
-    if (activeRunCount() >= max) break;
     if (t.parent_task_id) continue; // chain children are managed by chainTick
     const proj = projById.get(t.project_id);
     if (!proj || !proj.enabled || !due(t.scheduled_for)) continue;
     await tryStart(t.id, proj);
   }
 
-  // 2) Auto-mode pending tasks — only when the global switch is on. Tasks pulled
-  // from a planning-only source are never auto-run (they feed the plan picker).
-  if (settings.auto_run_enabled) {
-    const pending = await listTasks({ status: "pending", limit: 200 });
-    for (const t of pending) {
-      if (activeRunCount() >= max) break;
-      if (t.source_role === "planning") continue;
-      if (t.parent_task_id) continue; // chain children are managed by chainTick
-      const proj = projById.get(t.project_id);
-      if (!proj || !proj.enabled || !proj.auto_mode || !due(t.scheduled_for))
-        continue;
-      await tryStart(t.id, proj);
-    }
+  // 2) Auto-mode pending tasks — only for accounts whose auto-run switch is on.
+  // Tasks pulled from a planning-only source are never auto-run (plan picker).
+  const pending = await listTasks({ status: "pending", limit: 200 });
+  for (const t of pending) {
+    if (t.source_role === "planning") continue;
+    if (t.parent_task_id) continue; // chain children are managed by chainTick
+    const proj = projById.get(t.project_id);
+    if (!proj || !proj.enabled || !proj.auto_mode || !due(t.scheduled_for))
+      continue;
+    if (!autoFor(proj.account_id)) continue; // account's auto-run is off
+    await tryStart(t.id, proj);
   }
   return started;
 }
 
 async function safeStart(taskId: number, projectId: number): Promise<void> {
   const task = await getTask(taskId);
-  const project = await getProject(projectId);
+  const project = await getResolvedProject(projectId);
   if (!task || !project) return;
   try {
     await startTaskOrChain(task, project);
@@ -271,7 +284,7 @@ export async function startTaskRun(taskId: number): Promise<{
 }> {
   const task = await getTask(taskId);
   if (!task) return { started: false, queued: false, reason: "Task not found" };
-  const project = await getProject(task.project_id);
+  const project = await getResolvedProject(task.project_id);
   if (!project)
     return { started: false, queued: false, reason: "Project not found" };
   if (!project.enabled)
@@ -282,13 +295,20 @@ export async function startTaskRun(taskId: number): Promise<{
     return { started: false, queued: false, reason: gate.reason };
   }
 
-  const settings = await getSettings();
+  const settings = await getSettings(project.account_id);
+  const accountRunning = (
+    await listRuns({
+      status: "running",
+      account_id: project.account_id,
+      limit: 1000,
+    })
+  ).length;
   const projectBusy =
     (await listRuns({ status: "running", project_id: project.id, limit: 1 }))
       .length > 0;
-  // No free global slot, or this project is already running → queue it (runs
-  // ASAP, in order). Clear any schedule since the user asked to run it now.
-  if (activeRunCount() >= settings.max_concurrent_runs || projectBusy) {
+  // No free slot for this account, or this project is already running → queue
+  // it (runs ASAP, in order). Clear any schedule since the user asked for now.
+  if (accountRunning >= settings.max_concurrent_runs || projectBusy) {
     await queueTask(taskId, null);
     return { started: false, queued: true };
   }
@@ -306,7 +326,9 @@ async function loop(): Promise<void> {
   } catch (e) {
     state.lastError = (e as Error).message;
   } finally {
-    const settings = await getSettings().catch(() => ({
+    // One process timer drives the loop, so poll_interval stays a single global
+    // cadence anchored to the default account (id 1).
+    const settings = await getSettings(1).catch(() => ({
       poll_interval_seconds: 60,
     }));
     state.timer = setTimeout(

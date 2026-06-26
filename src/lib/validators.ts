@@ -30,6 +30,8 @@ export const mcpServerSchema = z.object({
 });
 
 export const projectInputSchema = z.object({
+  // account_id is injected server-side from the active account, not the client.
+  base_project_id: z.number().int().nullable().optional(),
   name: z.string().min(1, "El nombre es obligatorio"),
   repo_path: z.string().min(1, "La ruta del repo es obligatoria"),
   base_branch: z.string().optional(),

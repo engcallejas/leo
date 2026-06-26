@@ -1,13 +1,32 @@
 // Leo schema, embedded as a string so it needs no runtime file access
 // (robust under Next standalone output and inside Docker). Applied idempotently.
 export const SCHEMA = `
-CREATE TABLE IF NOT EXISTS settings (
+CREATE TABLE IF NOT EXISTS accounts (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  name       TEXT NOT NULL,
+  color      TEXT NOT NULL DEFAULT '#6366f1',
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- Install-wide UI state that isn't account-scoped (e.g. the active account
+-- pointer). The scheduler never reads this — it runs every account regardless.
+CREATE TABLE IF NOT EXISTS app_state (
   key   TEXT PRIMARY KEY,
   value TEXT NOT NULL
 );
 
+-- Engine + exec/auth config is per-account: the primary key is (account_id, key).
+CREATE TABLE IF NOT EXISTS settings (
+  account_id INTEGER NOT NULL DEFAULT 1,
+  key        TEXT NOT NULL,
+  value      TEXT NOT NULL,
+  PRIMARY KEY (account_id, key)
+);
+
 CREATE TABLE IF NOT EXISTS integrations (
   id             INTEGER PRIMARY KEY AUTOINCREMENT,
+  account_id     INTEGER NOT NULL DEFAULT 1,
   type           TEXT NOT NULL,
   name           TEXT NOT NULL,
   config         TEXT NOT NULL DEFAULT '{}',
@@ -20,6 +39,8 @@ CREATE TABLE IF NOT EXISTS integrations (
 
 CREATE TABLE IF NOT EXISTS projects (
   id               INTEGER PRIMARY KEY AUTOINCREMENT,
+  account_id       INTEGER NOT NULL DEFAULT 1,
+  base_project_id  INTEGER,
   name             TEXT NOT NULL,
   repo_path        TEXT NOT NULL,
   base_branch      TEXT NOT NULL DEFAULT 'main',

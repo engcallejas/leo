@@ -65,7 +65,7 @@ export function AuthBanner() {
         <strong style={{ color: "var(--danger)" }}>Autenticación requerida.</strong>{" "}
         {reason}
       </div>
-      <Link href="/settings" className="btn btn-sm" style={{ whiteSpace: "nowrap" }}>
+      <Link href="/account" className="btn btn-sm" style={{ whiteSpace: "nowrap" }}>
         Configurar →
       </Link>
     </div>

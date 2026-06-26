@@ -41,6 +41,7 @@ type IntegrationRow = Record<string, unknown>;
 function mapIntegration(r: IntegrationRow): Integration {
   return {
     id: Number(r.id),
+    account_id: Number(r.account_id ?? 1),
     type: r.type as IntegrationType,
     name: String(r.name),
     config: parseJSON(r.config, {} as Integration["config"]),
@@ -52,9 +53,14 @@ function mapIntegration(r: IntegrationRow): Integration {
   };
 }
 
-export async function listIntegrations(): Promise<Integration[]> {
+export async function listIntegrations(
+  accountId?: number,
+): Promise<Integration[]> {
+  const clause = accountId != null ? "WHERE account_id = ?" : "";
+  const args = accountId != null ? [accountId] : [];
   const rows = await query<IntegrationRow>(
-    "SELECT * FROM integrations ORDER BY id DESC",
+    `SELECT * FROM integrations ${clause} ORDER BY id DESC`,
+    args,
   );
   return rows.map(mapIntegration);
 }
@@ -68,6 +74,7 @@ export async function getIntegration(id: number): Promise<Integration | null> {
 }
 
 export interface IntegrationInput {
+  account_id: number;
   type: IntegrationType;
   name: string;
   config: Record<string, unknown>;
@@ -78,8 +85,9 @@ export async function createIntegration(
   input: IntegrationInput,
 ): Promise<Integration> {
   const res = await run(
-    "INSERT INTO integrations (type, name, config, enabled) VALUES (?, ?, ?, ?)",
+    "INSERT INTO integrations (account_id, type, name, config, enabled) VALUES (?, ?, ?, ?, ?)",
     [
+      input.account_id,
       input.type,
       input.name,
       JSON.stringify(input.config ?? {}),
@@ -127,6 +135,8 @@ type ProjectRow = Record<string, unknown>;
 function mapProject(r: ProjectRow): Project {
   return {
     id: Number(r.id),
+    account_id: Number(r.account_id ?? 1),
+    base_project_id: nOrNull(r.base_project_id),
     name: String(r.name),
     repo_path: String(r.repo_path),
     base_branch: String(r.base_branch),
@@ -152,9 +162,12 @@ function mapProject(r: ProjectRow): Project {
   };
 }
 
-export async function listProjects(): Promise<Project[]> {
+export async function listProjects(accountId?: number): Promise<Project[]> {
+  const clause = accountId != null ? "WHERE account_id = ?" : "";
+  const args = accountId != null ? [accountId] : [];
   const rows = await query<ProjectRow>(
-    "SELECT * FROM projects ORDER BY id DESC",
+    `SELECT * FROM projects ${clause} ORDER BY id DESC`,
+    args,
   );
   return rows.map(mapProject);
 }
@@ -167,6 +180,8 @@ export async function getProject(id: number): Promise<Project | null> {
 }
 
 export interface ProjectInput {
+  account_id: number;
+  base_project_id?: number | null;
   name: string;
   repo_path: string;
   base_branch?: string;
@@ -192,11 +207,13 @@ export interface ProjectInput {
 export async function createProject(input: ProjectInput): Promise<Project> {
   const res = await run(
     `INSERT INTO projects
-       (name, repo_path, base_branch, target_branch, prompt_rules, auto_mode,
+       (account_id, base_project_id, name, repo_path, base_branch, target_branch, prompt_rules, auto_mode,
         permission_mode, allowed_tools, disallowed_tools, model, max_turns, sources, enabled,
         resolve_source_on_done, auth_method, mcp_servers, strict_mcp, hooks, spec_globs, interactive)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
+      input.account_id,
+      input.base_project_id ?? null,
       input.name,
       input.repo_path,
       input.base_branch || "main",
@@ -231,13 +248,16 @@ export async function updateProject(
   const merged = { ...cur, ...input };
   await run(
     `UPDATE projects SET
-       name = ?, repo_path = ?, base_branch = ?, target_branch = ?, prompt_rules = ?,
+       account_id = ?, base_project_id = ?, name = ?, repo_path = ?, base_branch = ?,
+       target_branch = ?, prompt_rules = ?,
        auto_mode = ?, permission_mode = ?, allowed_tools = ?, disallowed_tools = ?,
        model = ?, max_turns = ?, sources = ?, enabled = ?, resolve_source_on_done = ?,
        auth_method = ?, mcp_servers = ?, strict_mcp = ?, hooks = ?, spec_globs = ?,
        interactive = ?, updated_at = datetime('now')
      WHERE id = ?`,
     [
+      merged.account_id ?? 1,
+      merged.base_project_id ?? null,
       merged.name,
       merged.repo_path,
       merged.base_branch || "main",
@@ -266,6 +286,59 @@ export async function updateProject(
 
 export async function deleteProject(id: number): Promise<void> {
   await run("DELETE FROM projects WHERE id = ?", [id]);
+}
+
+// ---------- project config inheritance (project → base project) ----------
+function emptyStr(v: string | null | undefined): boolean {
+  return v == null || String(v).trim() === "";
+}
+
+/**
+ * Fill a project's *unset* inheritable config fields from its base project
+ * (recursively up the chain). Identity/wiring fields (name, repo_path, branches,
+ * sources, the booleans) are never inherited. Account-level model/auth fallback
+ * is applied later by resolveProjectExec — this only resolves the project→base
+ * chain. Cycle-guarded.
+ */
+function mergeInheritedProject(p: Project, base: Project): Project {
+  return {
+    ...p,
+    model: emptyStr(p.model) ? base.model : p.model,
+    prompt_rules: emptyStr(p.prompt_rules) ? base.prompt_rules : p.prompt_rules,
+    allowed_tools: emptyStr(p.allowed_tools) ? base.allowed_tools : p.allowed_tools,
+    disallowed_tools: emptyStr(p.disallowed_tools)
+      ? base.disallowed_tools
+      : p.disallowed_tools,
+    max_turns: p.max_turns == null ? base.max_turns : p.max_turns,
+    mcp_servers: p.mcp_servers.length === 0 ? base.mcp_servers : p.mcp_servers,
+    hooks: emptyStr(p.hooks) ? base.hooks : p.hooks,
+    spec_globs: emptyStr(p.spec_globs) ? base.spec_globs : p.spec_globs,
+    auth_method: p.auth_method === "inherit" ? base.auth_method : p.auth_method,
+  };
+}
+
+async function resolveProjectChain(
+  project: Project,
+  seen: Set<number>,
+): Promise<Project> {
+  if (project.base_project_id == null || seen.has(project.base_project_id))
+    return project;
+  const baseRaw = await getProject(project.base_project_id);
+  if (!baseRaw) return project;
+  seen.add(baseRaw.id);
+  const base = await resolveProjectChain(baseRaw, seen);
+  return mergeInheritedProject(project, base);
+}
+
+/**
+ * A project with inheritable fields resolved through its base-project chain.
+ * Used by the orchestrator before building a run and by the form to preview
+ * effective values. Returns null if the project doesn't exist.
+ */
+export async function getResolvedProject(id: number): Promise<Project | null> {
+  const project = await getProject(id);
+  if (!project) return null;
+  return resolveProjectChain(project, new Set([project.id]));
 }
 
 // ---------- tasks ----------
@@ -340,6 +413,7 @@ export async function upsertTask(input: TaskInput): Promise<Task | null> {
 export async function listTasks(filter?: {
   status?: TaskStatus;
   project_id?: number;
+  account_id?: number;
   limit?: number;
 }): Promise<Task[]> {
   const where: string[] = [];
@@ -351,6 +425,10 @@ export async function listTasks(filter?: {
   if (filter?.project_id) {
     where.push("project_id = ?");
     args.push(filter.project_id);
+  }
+  if (filter?.account_id != null) {
+    where.push("project_id IN (SELECT id FROM projects WHERE account_id = ?)");
+    args.push(filter.account_id);
   }
   const clause = where.length ? `WHERE ${where.join(" AND ")}` : "";
   const limit = filter?.limit ?? 200;
@@ -608,6 +686,7 @@ export async function updateRun(
 export async function listRuns(filter?: {
   task_id?: number;
   project_id?: number;
+  account_id?: number;
   status?: RunStatus;
   limit?: number;
 }): Promise<Run[]> {
@@ -620,6 +699,10 @@ export async function listRuns(filter?: {
   if (filter?.project_id) {
     where.push("project_id = ?");
     args.push(filter.project_id);
+  }
+  if (filter?.account_id != null) {
+    where.push("project_id IN (SELECT id FROM projects WHERE account_id = ?)");
+    args.push(filter.account_id);
   }
   if (filter?.status) {
     where.push("status = ?");

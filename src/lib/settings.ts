@@ -8,9 +8,10 @@ const DEFAULTS: AppSettings = {
   auto_run_enabled: true,
 };
 
-export async function getSettings(): Promise<AppSettings> {
+export async function getSettings(accountId: number): Promise<AppSettings> {
   const rows = await query<{ key: string; value: string }>(
-    "SELECT key, value FROM settings",
+    "SELECT key, value FROM settings WHERE account_id = ?",
+    [accountId],
   );
   const map = new Map(rows.map((r) => [r.key, r.value]));
   return {
@@ -29,6 +30,7 @@ export async function getSettings(): Promise<AppSettings> {
 }
 
 export async function updateSettings(
+  accountId: number,
   patch: Partial<AppSettings>,
 ): Promise<AppSettings> {
   const entries: [string, string][] = [];
@@ -49,11 +51,11 @@ export async function updateSettings(
 
   for (const [key, value] of entries) {
     await run(
-      "INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-      [key, value],
+      "INSERT INTO settings (account_id, key, value) VALUES (?, ?, ?) ON CONFLICT(account_id, key) DO UPDATE SET value = excluded.value",
+      [accountId, key, value],
     );
   }
-  return getSettings();
+  return getSettings(accountId);
 }
 
 function num(v: string | undefined, fallback: number): number {

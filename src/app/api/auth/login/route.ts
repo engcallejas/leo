@@ -1,5 +1,5 @@
 import { spawn } from "child_process";
-import { badRequest, json, serverError } from "@/lib/api";
+import { accountIdFrom, badRequest, json, serverError } from "@/lib/api";
 import { envFlags } from "@/lib/claude-auth";
 import { getSettings } from "@/lib/settings";
 
@@ -27,7 +27,7 @@ export async function POST(req: Request) {
   }
 
   try {
-    const settings = await getSettings();
+    const settings = await getSettings(await accountIdFrom(req));
     const bin = settings.claude_binary_path || "claude";
     const cmd = `${bin} ${tool}`.replace(/"/g, '\\"');
     const child = spawn(

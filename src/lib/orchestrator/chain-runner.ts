@@ -2,7 +2,7 @@ import { getProvider } from "../integrations";
 import {
   createChainChild,
   getIntegration,
-  getProject,
+  getResolvedProject,
   listChainParents,
   listChildTasks,
   listRuns,
@@ -105,7 +105,7 @@ export async function chainTick(): Promise<void> {
     const parents = await listChainParents();
     for (const parent of parents) {
       try {
-        const project = await getProject(parent.project_id);
+        const project = await getResolvedProject(parent.project_id);
         if (!project) continue;
         const subs = await fetchSubtasks(parent);
         // A chain parent always had subtasks; an empty result here means a

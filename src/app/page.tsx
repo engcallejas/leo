@@ -77,13 +77,13 @@ export default function DashboardPage() {
   };
 
   const stats = [
-    { label: "Proyectos", value: projects.length, href: "/projects" },
+    { label: "Proyectos", value: projects.length, href: "/account" },
     {
       label: "Integraciones",
       value: new Set(
         projects.flatMap((p) => p.sources.map((s) => s.integration_id)),
       ).size,
-      href: "/integrations",
+      href: "/account",
     },
     { label: "Tareas pendientes", value: pending.length, href: "/runs" },
     {

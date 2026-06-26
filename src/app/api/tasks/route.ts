@@ -1,5 +1,5 @@
 import { randomUUID } from "crypto";
-import { json, parse, serverError } from "@/lib/api";
+import { json, parse, projectIdFrom, serverError } from "@/lib/api";
 import { getProject, listTasks, upsertTask } from "@/lib/repo";
 import type { TaskStatus } from "@/lib/types";
 import { manualTaskSchema } from "@/lib/validators";
@@ -7,14 +7,17 @@ import { manualTaskSchema } from "@/lib/validators";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+// Scoped to the active project (the view scope). Returns [] when the active
+// account has no projects.
 export async function GET(req: Request) {
   try {
     const url = new URL(req.url);
     const status = url.searchParams.get("status") as TaskStatus | null;
-    const projectId = url.searchParams.get("project_id");
+    const projectId = await projectIdFrom(req);
+    if (projectId == null) return json([]);
     const tasks = await listTasks({
       status: status ?? undefined,
-      project_id: projectId ? Number(projectId) : undefined,
+      project_id: projectId,
       limit: 300,
     });
     return json(tasks);
