@@ -135,6 +135,9 @@ export function migrate(): Promise<void> {
       await ensureColumn(db, "runs", "parent_run_id", "INTEGER");
       // Steering notes can carry images (JSON array of {filename,path,mime}).
       await ensureColumn(db, "run_notes", "images", "TEXT");
+      // Kanban board: explicit close/archive timestamp (terminal "Cerrada" lane).
+      await ensureColumn(db, "tasks", "closed_at", "TEXT");
+      await ensureColumn(db, "plans", "closed_at", "TEXT");
       // Plan-scoped interactions: add plan_id and relax run_id (NOT NULL → NULL)
       // so refinement can ask the human, reusing the run_interactions table.
       await ensureColumn(db, "run_interactions", "plan_id", "INTEGER");

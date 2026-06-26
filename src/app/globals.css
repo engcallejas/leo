@@ -581,3 +581,237 @@ details[open] .chev {
   padding: 0 12px;
   margin: 16px 0 6px;
 }
+
+/* ============================================================
+   Kanban board (Tablero) — the six unified orchestration lanes.
+   Cards drag to advance; columns are derived from status.
+   ============================================================ */
+.board {
+  display: flex;
+  gap: 14px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding-bottom: 10px;
+  align-items: stretch;
+}
+.board-col {
+  flex: 0 0 288px;
+  width: 288px;
+  display: flex;
+  flex-direction: column;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  min-height: 0;
+  transition:
+    border-color 0.12s ease,
+    background 0.12s ease;
+}
+.board-col-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 14px 2px;
+}
+.board-col-title {
+  font-family: var(--font-serif);
+  font-weight: 600;
+  font-size: 14.5px;
+}
+.board-col-count {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  color: var(--muted);
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 1px 8px;
+}
+.board-col-hint {
+  font-size: 10.5px;
+  color: var(--muted);
+  padding: 2px 14px 8px;
+}
+.board-col-body {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  padding: 4px 10px 12px;
+  overflow-y: auto;
+  flex: 1;
+  min-height: 64px;
+}
+.board-col.drop-ok {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 7%, var(--panel-2));
+}
+.board-col.drop-deny {
+  border-color: var(--border-strong);
+}
+.board-card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: var(--shadow-sm);
+  padding: 10px 12px;
+  cursor: pointer;
+  transition:
+    box-shadow 0.12s ease,
+    border-color 0.12s ease,
+    transform 0.06s ease;
+}
+.board-card:hover {
+  border-color: var(--border-strong);
+  box-shadow: var(--shadow-md);
+}
+.board-card[draggable="true"] {
+  cursor: grab;
+}
+.board-card.dragging {
+  opacity: 0.45;
+  cursor: grabbing;
+}
+.board-card.failed {
+  border-left: 2px solid var(--danger);
+}
+.board-card-title {
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.4;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.board-card-foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 9px;
+  flex-wrap: wrap;
+}
+.board-card-proj {
+  font-size: 11px;
+  color: var(--muted);
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.board-card-sub {
+  font-size: 10.5px;
+  font-family: var(--font-mono);
+  color: var(--muted);
+  margin-left: auto;
+}
+.board-src {
+  font-size: 9.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-weight: 700;
+  color: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 1px 5px;
+}
+.board-empty {
+  font-size: 11.5px;
+  color: var(--muted);
+  text-align: center;
+  padding: 16px 8px;
+  opacity: 0.7;
+}
+
+/* Right slide-in drawer (detail + inline edit). Modals stay confirmation-only. */
+.drawer-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(20, 23, 28, 0.4);
+  z-index: 60;
+  display: flex;
+  justify-content: flex-end;
+}
+.drawer {
+  width: 600px;
+  max-width: 94vw;
+  height: 100%;
+  background: var(--panel);
+  border-left: 1px solid var(--border);
+  box-shadow: -8px 0 30px rgba(20, 23, 28, 0.12);
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  animation: drawerIn 0.18s ease;
+}
+@keyframes drawerIn {
+  from {
+    transform: translateX(18px);
+    opacity: 0.5;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+.drawer-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 18px 20px 14px;
+  border-bottom: 1px solid var(--border);
+  position: sticky;
+  top: 0;
+  background: var(--panel);
+  z-index: 1;
+}
+.drawer-body {
+  padding: 18px 20px 28px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+@media (prefers-reduced-motion: reduce) {
+  .drawer {
+    animation: none;
+  }
+}
+
+/* Toast — transient action feedback / illegal-drop notice. */
+.toast {
+  position: fixed;
+  bottom: 22px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: #14171c;
+  color: #f3f5f8;
+  font-size: 13px;
+  padding: 10px 16px;
+  border-radius: 9px;
+  box-shadow: var(--shadow-md);
+  z-index: 80;
+  max-width: 80vw;
+  animation: toastIn 0.16s ease;
+}
+.toast.err {
+  background: var(--danger);
+}
+@keyframes toastIn {
+  from {
+    opacity: 0;
+    transform: translate(-50%, 6px);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .toast {
+    animation: none;
+  }
+}

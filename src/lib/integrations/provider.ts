@@ -84,6 +84,16 @@ export interface IntegrationProvider {
     externalId: string,
     markdown: string,
   ): Promise<ProviderTestResult>;
+  /**
+   * Edit a task's business fields (title / description / status) and push them
+   * back to the source. Used by the board's "Fuentes" lane. Any subset of fields
+   * may be provided; an empty patch is a no-op.
+   */
+  updateTask?(
+    config: Record<string, unknown>,
+    externalId: string,
+    patch: { name?: string; description?: string; status?: string },
+  ): Promise<ProviderTestResult>;
   /** Subtasks of a task, in order (for subtask-chain execution). */
   fetchSubtasks?(
     config: Record<string, unknown>,

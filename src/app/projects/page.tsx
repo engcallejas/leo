@@ -4,14 +4,13 @@ import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { api } from "@/components/client";
 import { Header } from "@/components/Header";
-import { ErrorBar, Field, Modal, useConfirm } from "@/components/ui";
+import { ErrorBar, useConfirm } from "@/components/ui";
 import type { Project } from "@/lib/types";
 
 export default function ProjectsPage() {
   const { confirm, dialog } = useConfirm();
   const [items, setItems] = useState<Project[]>([]);
   const [err, setErr] = useState<string | null>(null);
-  const [manualFor, setManualFor] = useState<Project | null>(null);
 
   const load = useCallback(async () => {
     setItems(await api.get("/api/projects"));
@@ -101,12 +100,6 @@ export default function ProjectsPage() {
                   </div>
                 </div>
                 <div style={{ display: "flex", gap: 6, alignItems: "start" }}>
-                  <button
-                    className="btn btn-sm"
-                    onClick={() => setManualFor(p)}
-                  >
-                    + Tarea
-                  </button>
                   <Link href={`/projects/${p.id}`} className="btn btn-sm">
                     Editar
                   </Link>
@@ -123,86 +116,7 @@ export default function ProjectsPage() {
         </div>
       )}
 
-      {manualFor && (
-        <ManualTaskModal
-          project={manualFor}
-          onClose={() => setManualFor(null)}
-        />
-      )}
       {dialog}
     </div>
-  );
-}
-
-function ManualTaskModal({
-  project,
-  onClose,
-}: {
-  project: Project;
-  onClose: () => void;
-}) {
-  const [title, setTitle] = useState("");
-  const [description, setDescription] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
-
-  const create = async (runNow: boolean) => {
-    setBusy(true);
-    setErr(null);
-    try {
-      const task = await api.post("/api/tasks", {
-        project_id: project.id,
-        title,
-        description,
-      });
-      if (runNow) await api.post(`/api/tasks/${task.id}/run`);
-      onClose();
-    } catch (e) {
-      setErr((e as Error).message);
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  return (
-    <Modal title={`Tarea manual — ${project.name}`} onClose={onClose}>
-      <div style={{ display: "grid", gap: 14 }}>
-        <Field
-          label="Título"
-          value={title}
-          onChange={setTitle}
-          placeholder="Qué hay que hacer"
-        />
-        <div>
-          <label className="label">Descripción</label>
-          <textarea
-            className="textarea"
-            value={description}
-            onChange={(e) => setDescription(e.target.value)}
-            placeholder="Detalle, contexto, criterios de aceptación…"
-          />
-        </div>
-        {err && <ErrorBar text={err} />}
-        <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
-          <button className="btn" onClick={onClose}>
-            Cancelar
-          </button>
-          <button
-            className="btn"
-            onClick={() => create(false)}
-            disabled={!title || busy}
-          >
-            Crear
-          </button>
-          <button
-            className="btn btn-primary"
-            onClick={() => create(true)}
-            disabled={!title || busy}
-          >
-            Crear y ejecutar
-          </button>
-        </div>
-      </div>
-    </Modal>
   );
 }

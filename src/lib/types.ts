@@ -162,6 +162,8 @@ export interface Task {
   parent_task_id: number | null;
   /** Shared git branch for a subtask chain (set on the parent and its children). */
   chain_branch: string | null;
+  /** Set when the card was explicitly closed/archived from the board. */
+  closed_at: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -275,6 +277,8 @@ export interface Plan {
   refine_pid: number | null;
   refine_log: string | null;
   error: string | null;
+  /** Set when the plan was explicitly closed/archived from the board. */
+  closed_at: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -325,4 +329,50 @@ export interface AppSettings {
   claude_binary_path: string;
   /** Master switch: when false the scheduler polls but never auto-runs. */
   auto_run_enabled: boolean;
+}
+
+// ---------- board (kanban) ----------
+
+/** The six lanes of the unified orchestration board, in flow order. */
+export type BoardColumn =
+  | "fuentes" // raw source items (business inbox) — editable + sync to source
+  | "planeacion" // technical refinement (draft/refining/refined plans)
+  | "cola" // accepted into the work queue (queued)
+  | "ejecucion" // a run is in flight
+  | "revision" // done/dispatched/failed — close or iterate
+  | "cerrada"; // closed/archived or cancelled
+
+/**
+ * A normalized card on the board. A card is either a raw Task (still in the
+ * source inbox / running without a plan) or a Plan (the spine of stages 2–6).
+ */
+export interface BoardCard {
+  /** Stable React key + drag id, e.g. "plan-12" or "task-34". */
+  key: string;
+  kind: "task" | "plan";
+  /** Underlying row id (task id or plan id). */
+  id: number;
+  column: BoardColumn;
+  title: string;
+  project_id: number;
+  project_name: string;
+  source_type: SourceType;
+  source_url: string | null;
+  /** Raw underlying status (TaskStatus | PlanStatus). */
+  status: string;
+  /** Short secondary line, e.g. "3/5 pasos" or the run state. */
+  sub: string | null;
+  /** The card's canonical date (created_at) — what the date filter uses. */
+  date: string;
+  updated_at: string;
+  /** Plan-only step progress. */
+  steps_total?: number;
+  steps_done?: number;
+  /** Execution: the latest run for this card, if any. */
+  run_id?: number | null;
+  run_status?: RunStatus | null;
+  /** Needs-attention flag (a failed plan/task) — rendered in Revisión. */
+  failed: boolean;
+  /** Explicitly closed/archived. */
+  closed: boolean;
 }

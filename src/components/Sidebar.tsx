@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 import {
+  IconBoard,
   IconBox,
   IconClipboard,
   IconGear,
@@ -25,6 +26,7 @@ const GROUPS: { label: string | null; items: NavItem[] }[] = [
   {
     label: "Orquestación",
     items: [
+      { href: "/board", label: "Tablero", Icon: IconBoard },
       { href: "/projects", label: "Proyectos", Icon: IconBox },
       { href: "/plans", label: "Planeación", Icon: IconClipboard },
       { href: "/runs", label: "Ejecuciones", Icon: IconPlay },
@@ -100,7 +102,7 @@ export function Sidebar() {
     <aside
       className="sidebar"
       style={{
-        width: 236,
+        width: 258,
         borderRight: "1px solid var(--border)",
         padding: "18px 14px 14px",
         position: "sticky",

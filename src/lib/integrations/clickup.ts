@@ -436,4 +436,29 @@ export const clickupProvider: IntegrationProvider = {
       message: `ClickUp PUT descripción ${status}: ${truncate(JSON.stringify(body), 150)}`,
     };
   },
+
+  async updateTask(raw, externalId, patch): Promise<ProviderTestResult> {
+    const config = raw as unknown as ClickUpConfig;
+    const payload: Record<string, unknown> = {};
+    if (patch.name !== undefined) payload.name = patch.name;
+    // ClickUp accepts markdown_content for the description on PUT /task.
+    if (patch.description !== undefined)
+      payload.markdown_content = patch.description;
+    if (patch.status !== undefined) payload.status = patch.status;
+    if (Object.keys(payload).length === 0) {
+      return { ok: true, message: "Sin cambios que sincronizar." };
+    }
+    const { status: code, body } = await fetchJson(`${API}/task/${externalId}`, {
+      method: "PUT",
+      headers: headers(config),
+      body: JSON.stringify(payload),
+    });
+    if (code === 200) {
+      return { ok: true, message: "Tarea ClickUp sincronizada." };
+    }
+    return {
+      ok: false,
+      message: `ClickUp PUT task ${code}: ${truncate(JSON.stringify(body), 150)}`,
+    };
+  },
 };

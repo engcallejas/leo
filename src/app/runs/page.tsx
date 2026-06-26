@@ -4,6 +4,13 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "@/components/client";
 import {
+  DATE_PRESETS,
+  FilterBar,
+  FilterSelect,
+  presetDays,
+  withinDate,
+} from "@/components/filters";
+import {
   fmtCost,
   fmtDuration,
   runStatusLabel,
@@ -55,6 +62,7 @@ export default function RunsPage() {
   const [runs, setRuns] = useState<Run[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
   const [tasks, setTasks] = useState<Task[]>([]);
+  const [dateF, setDateF] = useState("all");
 
   const load = useCallback(async () => {
     const [r, p, t] = await Promise.all([
@@ -78,7 +86,11 @@ export default function RunsPage() {
   const taskTitle = (id: number) =>
     tasks.find((t) => t.id === id)?.title ?? `task #${id}`;
 
-  const forest = useMemo(() => buildRunForest(runs), [runs]);
+  const visible = useMemo(() => {
+    const days = presetDays(dateF);
+    return runs.filter((r) => withinDate(r.started_at, days));
+  }, [runs, dateF]);
+  const forest = useMemo(() => buildRunForest(visible), [visible]);
 
   return (
     <div className="ed">
@@ -95,11 +107,28 @@ export default function RunsPage() {
         </div>
       </div>
 
+      {runs.length > 0 && (
+        <FilterBar right={`${forest.length} de ${runs.length}`}>
+          <FilterSelect
+            label="Fecha"
+            value={dateF}
+            onChange={setDateF}
+            options={DATE_PRESETS.map((d) => ({ value: d.key, label: d.label }))}
+          />
+        </FilterBar>
+      )}
+
       {runs.length === 0 ? (
         <div className="card" style={{ padding: 28, textAlign: "center" }}>
           <div className="muted">
             Aún no hay ejecuciones. Usa “Poll ahora” o crea una tarea manual en un
             proyecto.
+          </div>
+        </div>
+      ) : visible.length === 0 ? (
+        <div className="card" style={{ padding: 28, textAlign: "center" }}>
+          <div className="muted">
+            Ninguna ejecución en el rango de fecha seleccionado.
           </div>
         </div>
       ) : (

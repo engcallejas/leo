@@ -45,6 +45,12 @@ tokens to a dark palette locally; everything inside re-themes automatically.
 - `.meta-strip` + `.meta-item` / `.meta-k` / `.meta-v` — compact metadata row (replaces equal stat boxes)
 - `.sec-ico` — tinted icon chip; `SectionHeader` component pairs it with a title + desc
 - `.fieldset` (+ `.fieldset-title` / `.fieldset-desc`) + `.form-grid` (+ `.span-2`) — forms
+- `.board` + `.board-col` (+ `.board-col-head` / `-title` / `-count` / `-hint` / `-body`) +
+  `.board-card` (+ `.failed` / `.dragging`; column gets `.drop-ok` / `.drop-deny` while a card
+  hovers) — the Kanban board lanes/cards.
+- `Drawer` (`src/components/ui.tsx`) — right slide-in panel (`.drawer` + `.drawer-overlay` /
+  `-head` / `-body`) for **detail + inline editing**. `useToast()` → `{ show, toast }` (`.toast`,
+  `.toast.err`) for transient action feedback.
 - Icons: `src/components/icons.tsx` (stroke SVGs). **No emoji as icons.**
 
 ## Layout principles
@@ -72,6 +78,25 @@ tokens to a dark palette locally; everything inside re-themes automatically.
   // render {dialog} once in the tree
   ```
 - `Modal` (`src/components/ui.tsx`) is the base overlay; `ConfirmDialog` wraps it.
+- **Rich detail/edit surfaces use a `Drawer` (right slide-in), not a modal.** Modals
+  are confirmation/alert-only; a drawer is the place for a card's facet, an inline
+  edit form, or a deep-link hub. Put the **primary actions first** (the drawer is for
+  acting); clamp long reference text (e.g. a refined objective) into a scrollable box.
+
+## Board (Tablero) — the lifecycle Kanban
+
+- One **card per unit of work**. A card is a raw `Task` while it sits in the source
+  inbox (Fuentes) and becomes its `Plan` once promoted (the Plan is the spine of the
+  remaining lanes). Cards are derived from status — never a stored `column`. Dedup:
+  a task already owned by a plan (same project + source + external id), a plan-step's
+  execution task, and chain subtasks are not shown as their own cards.
+- Six lanes, in flow order: **Fuentes → Planeación → Cola → Ejecución → Revisión →
+  Cerrada**. "Cerrada" is a real terminal state (`closed_at`), distinct from `done`.
+- **Drag to advance.** Native HTML5 DnD; a card exposes exactly one legal forward
+  target (and a legal back step for plans = cancel → refined). Dropping fires the real
+  operation, reusing existing endpoints. Heavy/irreversible steps (run, cancel) confirm
+  via `useConfirm`; light steps (promote, enqueue, close) just act + toast. Illegal
+  drops show `.drop-deny` and a toast — they never mutate.
 
 ## Anti-patterns (do not ship)
 

@@ -287,6 +287,7 @@ function mapTask(r: TaskRow): Task {
     source_role: (r.source_role as SourceRole) ?? "development",
     parent_task_id: nOrNull(r.parent_task_id),
     chain_branch: (r.chain_branch as string) ?? null,
+    closed_at: (r.closed_at as string) ?? null,
     created_at: String(r.created_at),
     updated_at: String(r.updated_at),
   };
@@ -375,6 +376,45 @@ export async function setTaskStatus(
   );
 }
 
+/** Close (archive) or reopen a task card. Uses SQL datetime for a stable format. */
+export async function setTaskClosed(
+  id: number,
+  closed: boolean,
+): Promise<void> {
+  await run(
+    `UPDATE tasks SET closed_at = ${closed ? "datetime('now')" : "NULL"}, updated_at = datetime('now') WHERE id = ?`,
+    [id],
+  );
+}
+
+/**
+ * Edit a task's local business fields. Polling never overwrites title/description
+ * (upsertTask's ON CONFLICT only touches source_role), so these edits persist.
+ */
+export async function updateTaskFields(
+  id: number,
+  patch: { title?: string; description?: string; url?: string | null },
+): Promise<Task | null> {
+  const sets: string[] = [];
+  const args: (string | number | null)[] = [];
+  if (patch.title !== undefined) {
+    sets.push("title = ?");
+    args.push(patch.title);
+  }
+  if (patch.description !== undefined) {
+    sets.push("description = ?");
+    args.push(patch.description);
+  }
+  if (patch.url !== undefined) {
+    sets.push("url = ?");
+    args.push(patch.url);
+  }
+  if (sets.length === 0) return getTask(id);
+  sets.push("updated_at = datetime('now')");
+  await run(`UPDATE tasks SET ${sets.join(", ")} WHERE id = ?`, [...args, id]);
+  return getTask(id);
+}
+
 /** Queue a task (optionally scheduled for a future ISO datetime). */
 export async function queueTask(
   id: number,
@@ -384,6 +424,33 @@ export async function queueTask(
     "UPDATE tasks SET status = 'queued', scheduled_for = ?, updated_at = datetime('now') WHERE id = ?",
     [scheduledFor, id],
   );
+}
+
+/**
+ * Reconcile a source inbox: delete the still-pending, non-closed, non-chain tasks
+ * of a (project, integration, source) whose external_id is no longer returned by
+ * the source poll — i.e. they were deleted/moved away on the other side. Only the
+ * untouched inbox is pruned; queued/running/done/promoted tasks are left alone.
+ * Returns how many were removed.
+ */
+export async function prunePendingSourceTasks(
+  projectId: number,
+  integrationId: number,
+  sourceType: SourceType,
+  keepExternalIds: string[],
+): Promise<number> {
+  const rows = await query<{ id: number; external_id: string }>(
+    `SELECT id, external_id FROM tasks
+       WHERE project_id = ? AND integration_id = ? AND source_type = ?
+         AND status = 'pending' AND closed_at IS NULL AND parent_task_id IS NULL`,
+    [projectId, integrationId, sourceType],
+  );
+  const keep = new Set(keepExternalIds.map(String));
+  const stale = rows.filter((r) => !keep.has(String(r.external_id)));
+  for (const r of stale) {
+    await run("DELETE FROM tasks WHERE id = ?", [r.id]);
+  }
+  return stale.length;
 }
 
 /** Atomically claim a pending/queued task by flipping it to 'running'. */

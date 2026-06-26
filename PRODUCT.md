@@ -20,6 +20,12 @@ mid-run, and iterates on results (resume / compact / new PR). Success: the
 operator can see a run's state at a glance, understand what happened, correct it,
 and continue — without digging.
 
+The **Tablero** (Kanban board) is the single end-to-end surface: one card per
+unit of work moving through six lanes — Fuentes (source inbox, editable + synced
+back to the source) → Planeación (technical refinement) → Cola (work queue) →
+Ejecución (live run) → Revisión (close or iterate) → Cerrada. Cards drag to
+advance one legal step at a time; heavy steps (run, cancel) confirm first.
+
 ## Brand Personality
 
 Precise, calm, operator-grade. A control room, not a toy. Confident and quiet:
@@ -50,6 +56,7 @@ capable.
 
 ## Accessibility & Inclusion
 
-Dark theme. Body text ≥ 4.5:1 contrast. State is never color-only — always paired
+Light editorial theme (with a dark left rail and a dark transcript pane). Body
+text ≥ 4.5:1 contrast. State is never color-only — always paired
 with a label and/or dot/icon. All motion (status pulse, reveals) has a
 `prefers-reduced-motion` fallback. Targets ≥ 32px; visible focus rings.

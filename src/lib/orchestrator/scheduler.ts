@@ -8,13 +8,14 @@ import {
   listProjects,
   listRuns,
   listTasks,
+  prunePendingSourceTasks,
   queueTask,
   setIntegrationPollResult,
   setTaskStatus,
   upsertTask,
 } from "../repo";
 import { getSettings } from "../settings";
-import type { Project, Run } from "../types";
+import type { IntegrationType, Project, Run } from "../types";
 import { chainTick, startTaskOrChain } from "./chain-runner";
 import { planTick } from "./plan-runner";
 import { reconcileRefinements } from "./planner";
@@ -47,8 +48,15 @@ export function schedulerStatus() {
   };
 }
 
-/** Poll every project's source bindings and upsert tasks. */
-async function pollAll(): Promise<{ sourcesPolled: number }> {
+/**
+ * Poll every project's source bindings and upsert tasks. Pruning (deleting local
+ * inbox tasks that vanished from the source) is OFF by default and only happens
+ * on an explicit manual sync — never on the silent background tick — and never
+ * when a source came back empty, so a transient hiccup can't wipe the inbox.
+ */
+async function pollAll(
+  opts: { prune?: boolean } = {},
+): Promise<{ sourcesPolled: number; pruned: number }> {
   const [projects, integrations] = await Promise.all([
     listProjects(),
     listIntegrations(),
@@ -56,6 +64,17 @@ async function pollAll(): Promise<{ sourcesPolled: number }> {
   const intById = new Map(integrations.map((i) => [i.id, i]));
   const errorByIntegration = new Map<number, string | null>();
   const polled = new Set<number>();
+  // Which external ids each (project, integration) still returns — so we can
+  // prune local inbox tasks that vanished from the source.
+  const returned = new Map<
+    string,
+    {
+      projectId: number;
+      integrationId: number;
+      sourceType: IntegrationType;
+      ids: Set<string>;
+    }
+  >();
   let sourcesPolled = 0;
 
   for (const proj of projects) {
@@ -65,12 +84,24 @@ async function pollAll(): Promise<{ sourcesPolled: number }> {
       if (!integ || !integ.enabled) continue;
       sourcesPolled++;
       polled.add(integ.id);
+      const pairKey = `${proj.id}:${integ.id}`;
+      let pair = returned.get(pairKey);
+      if (!pair) {
+        pair = {
+          projectId: proj.id,
+          integrationId: integ.id,
+          sourceType: integ.type,
+          ids: new Set(),
+        };
+        returned.set(pairKey, pair);
+      }
       try {
         const items = await getProvider(integ.type).poll(
           integ.config as unknown as Record<string, unknown>,
           src.filter,
         );
         for (const it of items) {
+          pair.ids.add(it.external_id);
           await upsertTask({
             project_id: proj.id,
             integration_id: integ.id,
@@ -94,7 +125,24 @@ async function pollAll(): Promise<{ sourcesPolled: number }> {
   for (const id of polled) {
     await setIntegrationPollResult(id, errorByIntegration.get(id) ?? null);
   }
-  return { sourcesPolled };
+
+  // Prune inbox tasks that disappeared from the source — only on an explicit
+  // manual sync, only for integrations that polled cleanly, and only when the
+  // source returned at least one item (an empty result must never wipe the inbox).
+  let pruned = 0;
+  if (opts.prune) {
+    for (const pair of returned.values()) {
+      if (errorByIntegration.get(pair.integrationId)) continue;
+      if (pair.ids.size === 0) continue;
+      pruned += await prunePendingSourceTasks(
+        pair.projectId,
+        pair.integrationId,
+        pair.sourceType,
+        [...pair.ids],
+      );
+    }
+  }
+  return { sourcesPolled, pruned };
 }
 
 /** Start runs for eligible tasks, bounded by max_concurrent_runs. */
@@ -173,7 +221,7 @@ async function safeStart(taskId: number, projectId: number): Promise<void> {
 async function tick(): Promise<{ sourcesPolled: number; started: number }> {
   const poll = await pollAll().catch((e) => {
     state.lastError = `pollAll: ${(e as Error).message}`;
-    return { sourcesPolled: 0 };
+    return { sourcesPolled: 0, pruned: 0 };
   });
   // Advance plan orchestration before enqueueDue so freshly-dispatched step
   // tasks (status 'queued') get started in the same tick.
@@ -197,8 +245,9 @@ export async function pollNow(): Promise<{
   sourcesPolled: number;
   started: number;
   pending: number;
+  pruned: number;
 }> {
-  const poll = await pollAll();
+  const poll = await pollAll({ prune: true });
   await planTick().catch(() => {});
   await chainTick().catch(() => {});
   const started = await enqueueDue();
@@ -209,6 +258,7 @@ export async function pollNow(): Promise<{
     sourcesPolled: poll.sourcesPolled,
     started,
     pending: pendingTasks.length + queuedTasks.length,
+    pruned: poll.pruned,
   };
 }
 

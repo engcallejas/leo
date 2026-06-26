@@ -34,6 +34,7 @@ function mapPlan(r: PlanRow): Plan {
     refine_pid: nOrNull(r.refine_pid),
     refine_log: (r.refine_log as string) ?? null,
     error: (r.error as string) ?? null,
+    closed_at: (r.closed_at as string) ?? null,
     created_at: String(r.created_at),
     updated_at: String(r.updated_at),
   };
@@ -140,6 +141,17 @@ export async function updatePlan(
   sets.push("updated_at = datetime('now')");
   await run(`UPDATE plans SET ${sets.join(", ")} WHERE id = ?`, [...args, id]);
   return getPlan(id);
+}
+
+/** Close (archive) or reopen a plan card from the board. */
+export async function setPlanClosed(
+  id: number,
+  closed: boolean,
+): Promise<void> {
+  await run(
+    `UPDATE plans SET closed_at = ${closed ? "datetime('now')" : "NULL"}, updated_at = datetime('now') WHERE id = ?`,
+    [id],
+  );
 }
 
 export async function deletePlan(id: number): Promise<void> {

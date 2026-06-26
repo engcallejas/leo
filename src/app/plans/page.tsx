@@ -2,8 +2,15 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "@/components/client";
+import {
+  DATE_PRESETS,
+  FilterBar,
+  FilterSelect,
+  presetDays,
+  withinDate,
+} from "@/components/filters";
 import { Header } from "@/components/Header";
 import {
   planStatusBadgeClass,
@@ -13,11 +20,26 @@ import {
 import { useConfirm } from "@/components/ui";
 import type { Plan, Project } from "@/lib/types";
 
+const PLAN_STATUS_KEYS = [
+  "draft",
+  "refining",
+  "refined",
+  "queued",
+  "running",
+  "dispatched",
+  "done",
+  "failed",
+  "cancelled",
+];
+
 export default function PlansPage() {
   const router = useRouter();
   const { confirm, dialog } = useConfirm();
   const [plans, setPlans] = useState<Plan[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
+  const [dateF, setDateF] = useState("all");
+  const [statusF, setStatusF] = useState("all");
+  const [sourceF, setSourceF] = useState("all");
 
   const load = useCallback(async () => {
     const [pl, pr] = await Promise.all([
@@ -38,6 +60,16 @@ export default function PlansPage() {
 
   const projName = (id: number) =>
     projects.find((p) => p.id === id)?.name ?? `#${id}`;
+
+  const visible = useMemo(() => {
+    const days = presetDays(dateF);
+    return plans.filter(
+      (p) =>
+        (statusF === "all" || p.status === statusF) &&
+        (sourceF === "all" || p.source_type === sourceF) &&
+        withinDate(p.created_at, days),
+    );
+  }, [plans, dateF, statusF, sourceF]);
 
   const remove = async (p: Plan, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -73,6 +105,40 @@ export default function PlansPage() {
         }
       />
 
+      {plans.length > 0 && (
+        <FilterBar right={`${visible.length} de ${plans.length}`}>
+          <FilterSelect
+            label="Estado"
+            value={statusF}
+            onChange={setStatusF}
+            options={[
+              { value: "all", label: "Todos" },
+              ...PLAN_STATUS_KEYS.map((s) => ({
+                value: s,
+                label: planStatusLabel(s),
+              })),
+            ]}
+          />
+          <FilterSelect
+            label="Origen"
+            value={sourceF}
+            onChange={setSourceF}
+            options={[
+              { value: "all", label: "Todos" },
+              { value: "clickup", label: "ClickUp" },
+              { value: "sentry", label: "Sentry" },
+              { value: "manual", label: "Manual" },
+            ]}
+          />
+          <FilterSelect
+            label="Fecha"
+            value={dateF}
+            onChange={setDateF}
+            options={DATE_PRESETS.map((d) => ({ value: d.key, label: d.label }))}
+          />
+        </FilterBar>
+      )}
+
       {plans.length === 0 ? (
         <div className="card" style={{ padding: 28, textAlign: "center" }}>
           <div className="muted">
@@ -80,6 +146,10 @@ export default function PlansPage() {
             Sentry o de forma manual, y deja que Leo lo refine usando el contexto
             del proyecto.
           </div>
+        </div>
+      ) : visible.length === 0 ? (
+        <div className="card" style={{ padding: 28, textAlign: "center" }}>
+          <div className="muted">Ningún plan coincide con los filtros.</div>
         </div>
       ) : (
         <div className="card" style={{ overflow: "hidden" }}>
@@ -96,7 +166,7 @@ export default function PlansPage() {
               </tr>
             </thead>
             <tbody>
-              {plans.map((p) => (
+              {visible.map((p) => (
                 <tr
                   key={p.id}
                   style={{ cursor: "pointer" }}

@@ -1,4 +1,22 @@
-import type { RunStatus, TaskStatus } from "@/lib/types";
+import type { BoardColumn, RunStatus, TaskStatus } from "@/lib/types";
+
+/** The board lanes in flow order, with their labels + one-line subtitles. */
+export const BOARD_COLUMNS: {
+  key: BoardColumn;
+  label: string;
+  hint: string;
+}[] = [
+  { key: "fuentes", label: "Fuentes", hint: "Desde las fuentes · negocio" },
+  { key: "planeacion", label: "Planeación", hint: "Refinamiento técnico" },
+  { key: "cola", label: "Cola", hint: "Cola de trabajo" },
+  { key: "ejecucion", label: "Ejecución", hint: "En progreso" },
+  { key: "revision", label: "Revisión", hint: "Cerrar o iterar" },
+  { key: "cerrada", label: "Cerrada", hint: "Archivada" },
+];
+
+export function boardColumnLabel(c: BoardColumn): string {
+  return BOARD_COLUMNS.find((x) => x.key === c)?.label ?? c;
+}
 
 export function statusBadgeClass(status: string): string {
   switch (status) {

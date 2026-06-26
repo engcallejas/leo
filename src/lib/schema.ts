@@ -59,6 +59,7 @@ CREATE TABLE IF NOT EXISTS tasks (
   source_role    TEXT NOT NULL DEFAULT 'development',
   parent_task_id INTEGER,
   chain_branch   TEXT,
+  closed_at      TEXT,
   created_at     TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at     TEXT NOT NULL DEFAULT (datetime('now')),
   UNIQUE(project_id, source_type, external_id)
@@ -105,6 +106,7 @@ CREATE TABLE IF NOT EXISTS plans (
   refine_pid            INTEGER,
   refine_log            TEXT,
   error                 TEXT,
+  closed_at             TEXT,
   created_at            TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at            TEXT NOT NULL DEFAULT (datetime('now'))
 );
