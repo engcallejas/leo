@@ -4,17 +4,18 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "@/components/client";
-import { Header } from "@/components/Header";
-import {
-  fmtCost,
-  fmtDuration,
-  runStatusLabel,
-  statusBadgeClass,
-  timeAgo,
-} from "@/components/format";
+import { fmtCost, fmtDuration, runStatusLabel, timeAgo } from "@/components/format";
+import { Markdown } from "@/components/Markdown";
 import { RunInteractions } from "@/components/RunInteractions";
 import { RunIterate } from "@/components/RunIterate";
 import { RunNotes } from "@/components/RunNotes";
+import {
+  IconArrowLeft,
+  IconDoc,
+  IconLink,
+  IconStop,
+  IconTerminal,
+} from "@/components/icons";
 import type { Run, Task } from "@/lib/types";
 
 interface LogEntry {
@@ -29,6 +30,7 @@ export default function RunDetailPage() {
   const [task, setTask] = useState<Task | null>(null);
   const [entries, setEntries] = useState<LogEntry[]>([]);
   const [raw, setRaw] = useState(false);
+  const [tab, setTab] = useState<"resumen" | "transcript" | "task" | null>(null);
   const bufferRef = useRef("");
   const logBoxRef = useRef<HTMLDivElement>(null);
 
@@ -73,7 +75,7 @@ export default function RunDetailPage() {
   useEffect(() => {
     const el = logBoxRef.current;
     if (el) el.scrollTop = el.scrollHeight;
-  }, [entries]);
+  }, [entries, tab]);
 
   const stop = async () => {
     await api.post(`/api/runs/${id}/stop`).catch(() => {});
@@ -82,199 +84,312 @@ export default function RunDetailPage() {
 
   if (!run) {
     return (
-      <div>
-        <Header title={`Run #${id}`} />
-        <div className="muted">Cargando…</div>
+      <div className="ed">
+        <div style={{ maxWidth: 1040, margin: "0 auto" }}>
+          <div className="muted" style={{ padding: 40 }}>
+            Cargando run #{id}…
+          </div>
+        </div>
       </div>
     );
   }
 
+  const running = run.status === "running";
+  const hasResumen = !!run.error || !!run.result_summary;
+  const hasTask = !!(task && (task.description || task.url));
+  const defaultTab = running ? "transcript" : hasResumen ? "resumen" : "transcript";
+  let activeTab = tab ?? defaultTab;
+  if (activeTab === "resumen" && !hasResumen) activeTab = "transcript";
+  if (activeTab === "task" && !hasTask) activeTab = "transcript";
+
   return (
-    <div style={{ maxWidth: 1040, margin: "0 auto" }}>
-      <Header
-        title={`Run #${run.id}`}
-        subtitle={task?.title}
-        right={
-          <div style={{ display: "flex", gap: 10 }}>
-            <Link href="/runs" className="btn">
-              ← Volver
-            </Link>
-            {run.status === "running" && (
-              <button className="btn btn-danger" onClick={stop}>
-                Detener
-              </button>
-            )}
-          </div>
-        }
-      />
-
-      {run.parent_run_id && (
-        <div style={{ marginBottom: 12, fontSize: 12.5 }}>
-          <Link
-            href={`/runs/${run.parent_run_id}`}
-            className="muted"
-            style={{ textDecoration: "none" }}
-          >
-            ↩ Iteración de run #{run.parent_run_id}
-          </Link>
-        </div>
-      )}
-
+    <div className="ed">
+      <div style={{ maxWidth: 1040, margin: "0 auto" }}>
+        {/* ---- Header: back + actions ---- */}
       <div
         style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(5, 1fr)",
-          gap: 12,
-          marginBottom: 16,
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          marginBottom: 18,
         }}
       >
-        <Stat
-          label="Estado"
-          value={
-            <span className={statusBadgeClass(run.status)}>
-              {runStatusLabel(run.status)}
-            </span>
-          }
-        />
-        <Stat label="Costo" value={fmtCost(run.cost_usd)} />
-        <Stat label="Turnos" value={run.num_turns ?? "—"} />
-        <Stat label="Duración" value={fmtDuration(run.duration_ms)} />
-        <Stat label="Inicio" value={timeAgo(run.started_at)} />
+        <Link
+          href="/runs"
+          className="btn btn-sm"
+          style={{ gap: 7, color: "var(--muted)" }}
+        >
+          <IconArrowLeft width={15} height={15} /> Ejecuciones
+        </Link>
+        {running && (
+          <button className="btn btn-danger" onClick={stop} style={{ gap: 7 }}>
+            <IconStop width={15} height={15} /> Detener run
+          </button>
+        )}
       </div>
 
-      {task && (task.description || task.url) && (
-        <div className="card" style={{ padding: 14, marginBottom: 16 }}>
-          {task.url && (
-            <a
-              href={task.url}
-              target="_blank"
-              rel="noreferrer"
-              style={{ color: "var(--accent)", fontSize: 13 }}
+      {/* ---- Run identity + metadata (no equal-box grid) ---- */}
+      <header style={{ marginBottom: 22 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+          <RunStatusPill status={run.status} />
+          <h1
+            className="ed-display"
+            style={{ margin: 0, fontSize: 31, fontWeight: 500, letterSpacing: "-0.015em" }}
+          >
+            Run #{run.id}
+          </h1>
+          {run.parent_run_id != null && (
+            <Link
+              href={`/runs/${run.parent_run_id}`}
+              className="badge"
+              style={{ fontSize: 11.5 }}
+              title="Esta ejecución es una iteración de otra"
             >
-              {task.url} ↗
-            </a>
-          )}
-          {task.description && (
-            <pre
-              className="mono"
-              style={{
-                whiteSpace: "pre-wrap",
-                fontSize: 12,
-                margin: "8px 0 0",
-                color: "var(--muted)",
-              }}
-            >
-              {task.description}
-            </pre>
+              ↩ iteración de #{run.parent_run_id}
+            </Link>
           )}
         </div>
-      )}
+        {task?.title && (
+          <div
+            style={{
+              fontSize: 16,
+              color: "var(--text)",
+              marginTop: 9,
+              fontWeight: 500,
+              maxWidth: "70ch",
+            }}
+          >
+            {task.title}
+          </div>
+        )}
 
-      <RunInteractions runId={run.id} active={run.status === "running"} />
-
-      <RunNotes runId={run.id} active={run.status === "running"} />
-
-      <RunIterate run={run} />
-
-      {run.error && (
         <div
-          className="card badge-danger"
-          style={{ padding: "10px 14px", marginBottom: 16, fontSize: 13 }}
+          className="meta-strip"
+          style={{ marginTop: 18, paddingTop: 16, borderTop: "1px solid var(--border)" }}
         >
-          {run.error}
+          <Meta k="Costo" v={fmtCost(run.cost_usd)} />
+          <Meta k="Turnos" v={run.num_turns ?? "—"} />
+          <Meta k="Duración" v={fmtDuration(run.duration_ms)} />
+          <Meta k="Inicio" v={timeAgo(run.started_at)} />
+          {run.finished_at && <Meta k="Fin" v={timeAgo(run.finished_at)} />}
         </div>
-      )}
+      </header>
 
-      <div
-        className="card"
-        style={{ overflow: "hidden", display: "flex", flexDirection: "column" }}
-      >
-        <div
-          style={{
-            padding: "10px 14px",
-            borderBottom: "1px solid var(--border)",
-            display: "flex",
-            justifyContent: "space-between",
-            alignItems: "center",
-          }}
+      {/* ---- Pending questions (urgent, above everything) ---- */}
+      <RunInteractions runId={run.id} active={running} />
+
+      {/* ---- Read surfaces as tabs (one panel, not a stack of cards) ---- */}
+      <div className="tabbar">
+        {hasResumen && (
+          <button
+            className={`tab${activeTab === "resumen" ? " active" : ""}`}
+            onClick={() => setTab("resumen")}
+          >
+            <IconDoc width={15} height={15} />
+            {run.error ? "Error" : "Resumen"}
+          </button>
+        )}
+        <button
+          className={`tab${activeTab === "transcript" ? " active" : ""}`}
+          onClick={() => setTab("transcript")}
         >
-          <span style={{ fontWeight: 600, fontSize: 13 }}>
-            Transcripción{" "}
-            {run.status === "running" && (
-              <span className="badge badge-running badge-dot">en vivo</span>
-            )}
-          </span>
+          <IconTerminal width={15} height={15} />
+          Transcripción
+          {running && (
+            <span className="live-dot" style={{ color: "var(--running)", marginLeft: 2 }} />
+          )}
+        </button>
+        {hasTask && (
+          <button
+            className={`tab${activeTab === "task" ? " active" : ""}`}
+            onClick={() => setTab("task")}
+          >
+            <IconLink width={15} height={15} />
+            Tarea de origen
+          </button>
+        )}
+        <span style={{ flex: 1 }} />
+        {activeTab === "transcript" && (
           <label
+            className="muted"
             style={{
               display: "flex",
-              gap: 6,
+              gap: 7,
               alignItems: "center",
+              alignSelf: "center",
               fontSize: 12,
+              cursor: "pointer",
             }}
-            className="muted"
           >
-            <input
-              type="checkbox"
-              checked={raw}
-              onChange={(e) => setRaw(e.target.checked)}
-            />
+            <input type="checkbox" checked={raw} onChange={(e) => setRaw(e.target.checked)} />
             raw JSON
           </label>
-        </div>
-        <div
-          ref={logBoxRef}
-          style={{
-            maxHeight: 540,
-            overflow: "auto",
-            padding: "10px 14px",
-            fontFamily: "var(--font-mono)",
-            fontSize: 12.5,
-            lineHeight: 1.6,
-          }}
-        >
-          {entries.length === 0 ? (
-            <div className="muted">Esperando salida…</div>
-          ) : (
-            entries.map((e, i) => (
-              <div key={i} style={{ marginBottom: 6 }}>
-                <span
-                  style={{
-                    color: kindColor(e.kind),
-                    fontWeight: 600,
-                    marginRight: 8,
-                  }}
-                >
-                  {raw ? e.kind : labelFor(e.kind)}
-                </span>
-                <span style={{ whiteSpace: "pre-wrap" }}>{e.text}</span>
-              </div>
-            ))
-          )}
-        </div>
+        )}
       </div>
 
-      {run.result_summary && (
-        <div className="card" style={{ padding: 14, marginTop: 16 }}>
-          <div className="label">Resumen final</div>
-          <pre
-            className="mono"
-            style={{ whiteSpace: "pre-wrap", fontSize: 12.5, margin: 0 }}
+      <div style={{ marginBottom: 24 }}>
+        {/* Resumen / Error */}
+        {activeTab === "resumen" &&
+          (run.error ? (
+            <div
+              className="card"
+              style={{
+                padding: 18,
+                borderColor: "color-mix(in srgb, var(--danger) 32%, var(--border))",
+                background: "color-mix(in srgb, var(--danger) 7%, var(--panel))",
+              }}
+            >
+              <div
+                style={{
+                  fontSize: 11.5,
+                  fontWeight: 600,
+                  color: "var(--danger)",
+                  marginBottom: 7,
+                  textTransform: "uppercase",
+                  letterSpacing: "0.05em",
+                }}
+              >
+                El run terminó con error
+              </div>
+              <div
+                style={{ fontSize: 13.5, whiteSpace: "pre-wrap", color: "var(--text)" }}
+              >
+                {run.error}
+              </div>
+            </div>
+          ) : (
+            <div className="card" style={{ padding: "20px 22px" }}>
+              <div className="md" style={{ fontSize: 13.5 }}>
+                <Markdown text={run.result_summary ?? ""} />
+              </div>
+            </div>
+          ))}
+
+        {/* Transcripción (dark console) */}
+        {activeTab === "transcript" && (
+          <div
+            ref={logBoxRef}
+            className="term-body"
+            style={{
+              maxHeight: 580,
+              overflow: "auto",
+              padding: "14px 16px",
+              borderRadius: 12,
+              border: "1px solid var(--border)",
+            }}
           >
-            {run.result_summary}
-          </pre>
-        </div>
-      )}
+            {entries.length === 0 ? (
+              <div style={{ padding: "8px 0", color: "#7d8794" }}>
+                {running ? "Esperando salida del agente…" : "Sin salida registrada."}
+              </div>
+            ) : (
+              entries.map((e, i) => (
+                <div key={i} className="term-line" style={{ display: "flex", gap: 12 }}>
+                  <span
+                    style={{
+                      color: kindColor(e.kind),
+                      fontWeight: 600,
+                      flex: "none",
+                      width: 68,
+                      textAlign: "right",
+                      opacity: 0.85,
+                      userSelect: "none",
+                    }}
+                  >
+                    {raw ? e.kind : labelFor(e.kind)}
+                  </span>
+                  <span style={{ whiteSpace: "pre-wrap", minWidth: 0, flex: 1 }}>
+                    {e.text}
+                  </span>
+                </div>
+              ))
+            )}
+          </div>
+        )}
+
+        {/* Tarea de origen */}
+        {activeTab === "task" && task && (
+          <div className="card" style={{ padding: "18px 20px" }}>
+            {task.url && (
+              <a
+                href={task.url}
+                target="_blank"
+                rel="noreferrer"
+                style={{
+                  color: "var(--accent)",
+                  fontSize: 13,
+                  display: "inline-block",
+                  marginBottom: 10,
+                  fontWeight: 500,
+                }}
+              >
+                {task.url} ↗
+              </a>
+            )}
+            {task.description && (
+              <pre
+                className="mono"
+                style={{
+                  whiteSpace: "pre-wrap",
+                  fontSize: 12,
+                  margin: 0,
+                  color: "var(--muted)",
+                  lineHeight: 1.65,
+                }}
+              >
+                {task.description}
+              </pre>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* ---- Act: iterate (finished) / steer (running) ---- */}
+      <RunIterate run={run} />
+      <RunNotes runId={run.id} active={running} />
+      </div>
     </div>
   );
 }
 
-function Stat({ label, value }: { label: string; value: React.ReactNode }) {
+function RunStatusPill({ status }: { status: string }) {
+  const tone =
+    status === "done"
+      ? "badge-ok"
+      : status === "failed" || status === "cancelled"
+        ? "badge-danger"
+        : status === "running"
+          ? "badge-running"
+          : "";
+  const running = status === "running";
   return (
-    <div className="card" style={{ padding: 12 }}>
-      <div className="muted" style={{ fontSize: 11 }}>
-        {label}
-      </div>
-      <div style={{ fontSize: 15, fontWeight: 600, marginTop: 3 }}>{value}</div>
+    <span
+      className={`badge ${tone}`}
+      style={{ fontSize: 12.5, padding: "5px 12px", gap: 7, fontWeight: 600 }}
+    >
+      {running ? (
+        <span className="live-dot" />
+      ) : (
+        <span
+          style={{
+            width: 7,
+            height: 7,
+            borderRadius: 999,
+            background: "currentColor",
+            display: "inline-block",
+          }}
+        />
+      )}
+      {runStatusLabel(status)}
+    </span>
+  );
+}
+
+function Meta({ k, v }: { k: string; v: React.ReactNode }) {
+  return (
+    <div className="meta-item">
+      <span className="meta-k">{k}</span>
+      <span className="meta-v">{v}</span>
     </div>
   );
 }

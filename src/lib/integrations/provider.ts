@@ -69,6 +69,15 @@ export interface IntegrationProvider {
     config: Record<string, unknown>,
     externalId: string,
   ): Promise<{ title: string; objective: string; url: string | null } | null>;
+  /**
+   * Current status of a task plus its status *type* (ClickUp groups statuses
+   * into types: open / custom / done / closed). Used to detect when a task that
+   * was handed off to development has been completed. Returns null if unreadable.
+   */
+  fetchTaskState?(
+    config: Record<string, unknown>,
+    externalId: string,
+  ): Promise<{ status: string; type: string; url: string | null } | null>;
   /** Overwrite a task's description with markdown. */
   updateTaskDescription?(
     config: Record<string, unknown>,

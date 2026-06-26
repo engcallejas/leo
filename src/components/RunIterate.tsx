@@ -4,6 +4,8 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { api } from "@/components/client";
 import { ImageAttach, imageFilesFromPaste } from "@/components/ImageAttach";
+import { SectionHeader } from "@/components/Section";
+import { IconIterate } from "@/components/icons";
 import type { Run } from "@/lib/types";
 
 type PrMode = "commit" | "new_pr";
@@ -45,19 +47,17 @@ export function RunIterate({ run }: { run: Run }) {
   };
 
   return (
-    <div className="card" style={{ padding: 14, marginBottom: 16 }}>
-      <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 4 }}>
-        🔁 Iterar / Siguiente iteración
-      </div>
-      <div className="hint" style={{ marginTop: 0, marginBottom: 10 }}>
-        Continúa este run terminado: el agente reanuda su sesión exacta (con toda
-        su memoria —branch, PR, decisiones—) y aplica el ajuste que le pidas, sobre
-        la misma branch. Hereda el buzón de notas para que sigas corrigiéndolo.
-      </div>
+    <section className="card" style={{ padding: 18, marginBottom: 18 }}>
+      <SectionHeader
+        icon={<IconIterate />}
+        accent="var(--accent)"
+        title="Siguiente iteración"
+        desc="El agente reanuda su sesión exacta (memoria completa: branch, PR, decisiones) y aplica el ajuste que le pidas. Hereda el buzón de notas para seguir corrigiéndolo."
+      />
 
       <textarea
         className="textarea"
-        placeholder="El ajuste para esta iteración. Ej. “No uses Playwright (las migraciones no están desplegadas); cierra tras tests + CI verde y sube resultados a ClickUp.”"
+        placeholder="¿Qué ajustar en esta iteración? Ej. “Ya se aplicaron las migraciones, pero la automatización del cálculo de fechas no funcionó.”"
         value={instruction}
         disabled={busy}
         onChange={(e) => setInstruction(e.target.value)}
@@ -71,85 +71,99 @@ export function RunIterate({ run }: { run: Run }) {
         onKeyDown={(e) => {
           if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) launch();
         }}
-        style={{ width: "100%", minHeight: 76, fontFamily: "inherit", fontSize: 13 }}
+        style={{ width: "100%", minHeight: 80, fontFamily: "inherit", fontSize: 13 }}
       />
 
-      <div style={{ marginTop: 8 }}>
+      <div style={{ marginTop: 10 }}>
         <ImageAttach files={images} onChange={setImages} disabled={busy} />
       </div>
 
-      <div style={{ margin: "12px 0" }}>
-        <div className="label" style={{ marginBottom: 6 }}>
-          Al terminar
+      <div
+        style={{
+          display: "grid",
+          gap: 16,
+          gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))",
+          margin: "16px 0",
+        }}
+      >
+        <div>
+          <div className="label" style={{ marginBottom: 7 }}>
+            Al terminar
+          </div>
+          <div className="seg" role="group" aria-label="Acción al terminar">
+            {(
+              [
+                ["commit", "Commit a la branch"],
+                ["new_pr", "Crear PR nuevo"],
+              ] as [PrMode, string][]
+            ).map(([val, lbl]) => (
+              <button
+                key={val}
+                type="button"
+                className="seg-btn"
+                aria-pressed={prMode === val}
+                disabled={busy}
+                onClick={() => setPrMode(val)}
+              >
+                {lbl}
+              </button>
+            ))}
+          </div>
+          <div className="hint" style={{ marginTop: 7 }}>
+            {prMode === "new_pr"
+              ? "Abre un PR nuevo (branch nueva); no toca el anterior."
+              : "Commit + push a la misma branch; el PR existente se actualiza solo."}
+          </div>
         </div>
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-          {(
-            [
-              ["commit", "Commit a la branch actual"],
-              ["new_pr", "Crear PR nuevo"],
-            ] as [PrMode, string][]
-          ).map(([val, lbl]) => (
-            <button
-              key={val}
-              type="button"
-              className={prMode === val ? "btn btn-primary" : "btn"}
+
+        <div>
+          <div className="label" style={{ marginBottom: 7 }}>
+            Contexto
+          </div>
+          <label
+            style={{
+              display: "flex",
+              gap: 9,
+              alignItems: "flex-start",
+              fontSize: 12.5,
+              cursor: busy ? "default" : "pointer",
+            }}
+          >
+            <input
+              type="checkbox"
+              checked={compact}
               disabled={busy}
-              onClick={() => setPrMode(val)}
-              style={{ fontSize: 12.5 }}
-            >
-              {lbl}
-            </button>
-          ))}
-        </div>
-        <div className="hint" style={{ marginTop: 6 }}>
-          {prMode === "new_pr"
-            ? "Abre un PR nuevo para esta iteración (branch nueva); no toca el PR anterior."
-            : "Commit + push a la misma branch; si ya hay un PR, se actualiza solo."}
+              onChange={(e) => setCompact(e.target.checked)}
+              style={{ marginTop: 2 }}
+            />
+            <span>
+              <strong style={{ fontWeight: 600 }}>Compactar antes</strong>
+              <span className="muted">
+                {" "}
+                — destila la sesión y arranca fresco. Más liviano y barato; pierde
+                memoria fina. Útil si la sesión es muy larga.
+              </span>
+            </span>
+          </label>
         </div>
       </div>
 
-      <label
-        style={{
-          display: "flex",
-          gap: 8,
-          alignItems: "flex-start",
-          fontSize: 12.5,
-          margin: "10px 0",
-          cursor: busy ? "default" : "pointer",
-        }}
-      >
-        <input
-          type="checkbox"
-          checked={compact}
-          disabled={busy}
-          onChange={(e) => setCompact(e.target.checked)}
-          style={{ marginTop: 2 }}
-        />
-        <span>
-          <strong>Compactar antes</strong>{" "}
-          <span className="muted">
-            — destila la sesión en un resumen y arranca la iteración desde ahí
-            (contexto más liviano y barato; pierde memoria fina). Útil si la
-            sesión es muy larga.
-          </span>
-        </span>
-      </label>
-
       {error && (
         <div
-          className="badge-danger"
+          className="badge badge-danger"
           style={{
-            padding: "8px 11px",
+            display: "block",
+            padding: "9px 12px",
             borderRadius: 8,
             fontSize: 12.5,
-            marginBottom: 10,
+            marginBottom: 12,
           }}
         >
           {error}
         </div>
       )}
 
-      <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+      <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
         <button
           className="btn btn-primary"
           onClick={launch}
@@ -162,12 +176,12 @@ export function RunIterate({ run }: { run: Run }) {
               : "Lanzando…"
             : "Lanzar iteración"}
         </button>
-        {busy && compact && (
-          <span className="muted" style={{ fontSize: 12 }}>
-            Esto puede tardar (estoy resumiendo la sesión)…
-          </span>
-        )}
+        <span className="muted" style={{ fontSize: 12 }}>
+          {busy && compact
+            ? "Resumiendo la sesión, puede tardar…"
+            : "⌘/Ctrl + Enter"}
+        </span>
       </div>
-    </div>
+    </section>
   );
 }

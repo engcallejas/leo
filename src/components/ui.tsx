@@ -1,5 +1,7 @@
 "use client";
 
+import { useCallback, useState } from "react";
+
 export function Field({
   label,
   value,
@@ -91,4 +93,90 @@ export function Modal({
       </div>
     </div>
   );
+}
+
+/**
+ * Confirmation dialog. Modals in Leo are reserved for confirmations/alerts
+ * (never forms). Prefer the `useConfirm()` hook for an await-able API.
+ */
+export interface ConfirmOpts {
+  title: string;
+  body?: React.ReactNode;
+  confirmLabel?: string;
+  cancelLabel?: string;
+  danger?: boolean;
+}
+
+export function ConfirmDialog({
+  title,
+  body,
+  confirmLabel = "Confirmar",
+  cancelLabel = "Cancelar",
+  danger,
+  onConfirm,
+  onCancel,
+}: ConfirmOpts & { onConfirm: () => void; onCancel: () => void }) {
+  return (
+    <Modal title={title} onClose={onCancel}>
+      {body && (
+        <div
+          style={{
+            fontSize: 13.5,
+            color: "var(--muted)",
+            lineHeight: 1.55,
+            marginBottom: 22,
+          }}
+        >
+          {body}
+        </div>
+      )}
+      <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
+        <button className="btn" onClick={onCancel}>
+          {cancelLabel}
+        </button>
+        <button
+          className={danger ? "btn btn-danger" : "btn btn-primary"}
+          onClick={onConfirm}
+          autoFocus
+        >
+          {confirmLabel}
+        </button>
+      </div>
+    </Modal>
+  );
+}
+
+/**
+ * Await-able confirmation. Usage:
+ *   const { confirm, dialog } = useConfirm();
+ *   ...if (!(await confirm({ title, body, danger: true }))) return;
+ *   ...render {dialog} once in the component tree.
+ */
+export function useConfirm() {
+  const [state, setState] = useState<{
+    opts: ConfirmOpts;
+    resolve: (v: boolean) => void;
+  } | null>(null);
+
+  const confirm = useCallback(
+    (opts: ConfirmOpts) =>
+      new Promise<boolean>((resolve) => setState({ opts, resolve })),
+    [],
+  );
+
+  const settle = (v: boolean) =>
+    setState((s) => {
+      s?.resolve(v);
+      return null;
+    });
+
+  const dialog = state ? (
+    <ConfirmDialog
+      {...state.opts}
+      onConfirm={() => settle(true)}
+      onCancel={() => settle(false)}
+    />
+  ) : null;
+
+  return { confirm, dialog };
 }

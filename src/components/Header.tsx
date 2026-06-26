@@ -18,9 +18,14 @@ export function Header({
       }}
     >
       <div>
-        <h1 style={{ fontSize: 22, fontWeight: 700, margin: 0 }}>{title}</h1>
+        <h1
+          className="ed-display"
+          style={{ fontSize: 27, fontWeight: 500, margin: 0, letterSpacing: "-0.015em" }}
+        >
+          {title}
+        </h1>
         {subtitle && (
-          <div className="muted" style={{ fontSize: 13, marginTop: 2 }}>
+          <div className="muted" style={{ fontSize: 13, marginTop: 3 }}>
             {subtitle}
           </div>
         )}

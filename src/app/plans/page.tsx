@@ -10,10 +10,12 @@ import {
   planStatusLabel,
   timeAgo,
 } from "@/components/format";
+import { useConfirm } from "@/components/ui";
 import type { Plan, Project } from "@/lib/types";
 
 export default function PlansPage() {
   const router = useRouter();
+  const { confirm, dialog } = useConfirm();
   const [plans, setPlans] = useState<Plan[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
 
@@ -40,9 +42,12 @@ export default function PlansPage() {
   const remove = async (p: Plan, e: React.MouseEvent) => {
     e.stopPropagation();
     if (
-      !confirm(
-        `¿Eliminar el plan #${p.id} “${p.title.slice(0, 60)}”? Si está refinando o ejecutando, se detiene primero. No se puede deshacer.`,
-      )
+      !(await confirm({
+        title: "Eliminar plan",
+        body: `¿Eliminar el plan #${p.id} “${p.title.slice(0, 60)}”? Si está refinando o ejecutando, se detiene primero. No se puede deshacer.`,
+        confirmLabel: "Eliminar",
+        danger: true,
+      }))
     )
       return;
     setBusyId(p.id);
@@ -130,6 +135,7 @@ export default function PlansPage() {
           </table>
         </div>
       )}
+      {dialog}
     </div>
   );
 }

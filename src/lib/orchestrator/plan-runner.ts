@@ -542,6 +542,62 @@ export async function movePlanToDevStatus(
   };
 }
 
+/**
+ * For a plan that was handed off to ClickUp development ("dispatched"), check
+ * whether its origin ClickUp task has reached a completed status (status type
+ * "done" or "closed"). If so, mark the plan as done. Best-effort and idempotent.
+ */
+export async function syncDispatchedPlan(planId: number): Promise<{
+  ok: boolean;
+  completed: boolean;
+  status?: string;
+  message: string;
+}> {
+  const plan = await getPlanWithSteps(planId);
+  if (!plan) return { ok: false, completed: false, message: "Plan no encontrado" };
+
+  const taskId =
+    plan.source_type === "clickup" && plan.source_external_id
+      ? plan.source_external_id
+      : plan.clickup_parent_id;
+  if (!taskId) {
+    return {
+      ok: false,
+      completed: false,
+      message: "El plan no tiene una tarea ClickUp asociada.",
+    };
+  }
+  const project = await getProject(plan.project_id);
+  if (!project) return { ok: false, completed: false, message: "Proyecto no encontrado" };
+  const cu = await resolveClickUp(plan, project);
+  if (!cu) return { ok: false, completed: false, message: "Sin configuración ClickUp." };
+
+  const provider = getProvider("clickup");
+  if (!provider.fetchTaskState) {
+    return { ok: false, completed: false, message: "Proveedor ClickUp incompleto." };
+  }
+  const st = await provider.fetchTaskState(cu.config, taskId);
+  if (!st) {
+    return {
+      ok: false,
+      completed: false,
+      message: "No se pudo leer el estado de la tarea en ClickUp.",
+    };
+  }
+  const completed = st.type === "done" || st.type === "closed";
+  if (completed && plan.status !== "done") {
+    await updatePlan(planId, { status: "done", error: null });
+  }
+  return {
+    ok: true,
+    completed,
+    status: st.status,
+    message: completed
+      ? `La tarea está en "${st.status}" (completada). Plan marcado como completado.`
+      : `La tarea sigue en "${st.status}" en ClickUp; aún no completada.`,
+  };
+}
+
 /** Cumulative context handed to a step: refined spec + prior step summaries. */
 function buildStepContext(
   plan: Plan,
@@ -756,6 +812,17 @@ export async function planTick(): Promise<void> {
         }
       } catch {
         /* keep other plans moving */
+      }
+    }
+
+    // Plans handed off to ClickUp development: auto-mark done when the task is
+    // completed there, so they sync back here without manual checking.
+    const dispatched = await listPlans({ status: "dispatched", limit: 200 });
+    for (const plan of dispatched) {
+      try {
+        await syncDispatchedPlan(plan.id);
+      } catch {
+        /* best-effort */
       }
     }
   } finally {

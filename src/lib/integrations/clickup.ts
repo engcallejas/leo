@@ -334,6 +334,26 @@ export const clickupProvider: IntegrationProvider = {
     };
   },
 
+  async fetchTaskState(
+    raw,
+    externalId,
+  ): Promise<{ status: string; type: string; url: string | null } | null> {
+    const config = raw as unknown as ClickUpConfig;
+    const { status, body } = await fetchJson(`${API}/task/${externalId}`, {
+      headers: headers(config),
+    });
+    if (status !== 200) return null;
+    const t = body as {
+      status?: { status?: string; type?: string };
+      url?: string;
+    };
+    return {
+      status: (t.status?.status || "").trim(),
+      type: (t.status?.type || "").trim().toLowerCase(),
+      url: t.url ?? null,
+    };
+  },
+
   async uploadAttachment(raw, externalId, filename, data): Promise<ProviderTestResult> {
     const config = raw as unknown as ClickUpConfig;
     const form = new FormData();

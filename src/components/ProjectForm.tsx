@@ -5,6 +5,12 @@ import { FolderPicker } from "@/components/FolderPicker";
 import { McpEditor } from "@/components/McpEditor";
 import { ModelInput } from "@/components/ModelInput";
 import { SourceEditor } from "@/components/SourceEditor";
+import {
+  IconBox,
+  IconDoc,
+  IconPlay,
+  IconPlug,
+} from "@/components/icons";
 import { Field } from "@/components/ui";
 import type {
   Integration,
@@ -122,6 +128,15 @@ Ej:
 - Garantiza que los pasos del PR (checks) pasen.
 - Solo puede acceder al proyecto Supabase "staging" vía el MCP.`;
 
+type TabKey = "general" | "ejecucion" | "integraciones" | "hooks";
+
+const TABS: { key: TabKey; label: string; Icon: typeof IconBox }[] = [
+  { key: "general", label: "General", Icon: IconBox },
+  { key: "ejecucion", label: "Ejecución", Icon: IconPlay },
+  { key: "integraciones", label: "Integraciones & MCP", Icon: IconPlug },
+  { key: "hooks", label: "Hooks & Specs", Icon: IconDoc },
+];
+
 export function ProjectForm({
   draft,
   setDraft,
@@ -132,262 +147,353 @@ export function ProjectForm({
   integrations: Integration[];
 }) {
   const [picker, setPicker] = useState(false);
+  const [tab, setTab] = useState<TabKey>("general");
   const set = <K extends keyof Draft>(k: K, v: Draft[K]) =>
     setDraft({ ...draft, [k]: v });
 
   return (
-    <div style={{ display: "grid", gap: 14 }}>
-      <Field
-        label="Nombre"
-        value={draft.name}
-        onChange={(v) => set("name", v)}
-        placeholder="Ej. API Pagos"
-      />
-      <div>
-        <label className="label">Ruta local del repo</label>
-        <div style={{ display: "flex", gap: 8 }}>
-          <input
-            className="input"
-            value={draft.repo_path}
-            placeholder="/Users/tu-usuario/repos/api-pagos"
-            onChange={(e) => set("repo_path", e.target.value)}
-          />
+    <div>
+      <div className="tabbar" role="tablist">
+        {TABS.map(({ key, label, Icon }) => (
           <button
+            key={key}
             type="button"
-            className="btn"
-            onClick={() => setPicker(true)}
-            style={{ whiteSpace: "nowrap" }}
+            role="tab"
+            aria-selected={tab === key}
+            className={`tab${tab === key ? " active" : ""}`}
+            onClick={() => setTab(key)}
           >
-            📁 Examinar
+            <Icon width={15} height={15} />
+            {label}
           </button>
-        </div>
-        <div className="hint">
-          Claude se ejecuta con esta carpeta como cwd → respeta su CLAUDE.md y
-          .mcp.json
-        </div>
-      </div>
-      {picker && (
-        <FolderPicker
-          initialPath={draft.repo_path || undefined}
-          onSelect={(p) => {
-            set("repo_path", p);
-            setPicker(false);
-          }}
-          onClose={() => setPicker(false)}
-        />
-      )}
-
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-        <Field
-          label="Branch base"
-          value={draft.base_branch}
-          onChange={(v) => set("base_branch", v)}
-          placeholder="main"
-        />
-        <Field
-          label="Branch destino (PR)"
-          value={draft.target_branch}
-          onChange={(v) => set("target_branch", v)}
-          placeholder="leo/automated"
-        />
+        ))}
       </div>
 
-      <div>
-        <label className="label">Reglas del proyecto (prompt)</label>
-        <textarea
-          className="textarea"
-          style={{ minHeight: 130 }}
-          value={draft.prompt_rules}
-          placeholder={PROMPT_PLACEHOLDER}
-          onChange={(e) => set("prompt_rules", e.target.value)}
-        />
-        <div className="hint">
-          Se inyecta en cada ejecución como reglas de puede / debe / no puede /
-          no debe.
-        </div>
-      </div>
+      {tab === "general" && (
+        <div className="fieldset">
+          <div className="fieldset-title">Identidad del proyecto</div>
+          <div className="fieldset-desc">
+            Nombre, repositorio local y branches base/destino.
+          </div>
+          <div className="form-grid">
+            <Field
+              label="Nombre"
+              value={draft.name}
+              onChange={(v) => set("name", v)}
+              placeholder="Ej. API Pagos"
+            />
+            <div>
+              <label className="label">Ruta local del repo</label>
+              <div style={{ display: "flex", gap: 8 }}>
+                <input
+                  className="input"
+                  value={draft.repo_path}
+                  placeholder="/Users/tu-usuario/repos/api-pagos"
+                  onChange={(e) => set("repo_path", e.target.value)}
+                />
+                <button
+                  type="button"
+                  className="btn"
+                  onClick={() => setPicker(true)}
+                  style={{ whiteSpace: "nowrap" }}
+                >
+                  Examinar
+                </button>
+              </div>
+              <div className="hint">
+                Claude se ejecuta con esta carpeta como cwd → respeta su
+                CLAUDE.md y .mcp.json
+              </div>
+            </div>
+            {picker && (
+              <FolderPicker
+                initialPath={draft.repo_path || undefined}
+                onSelect={(p) => {
+                  set("repo_path", p);
+                  setPicker(false);
+                }}
+                onClose={() => setPicker(false)}
+              />
+            )}
 
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-        <div>
-          <label className="label">Modo de permisos</label>
-          <select
-            className="select"
-            value={draft.permission_mode}
-            onChange={(e) =>
-              set("permission_mode", e.target.value as PermissionMode)
-            }
-          >
-            <option value="default">default (pide permiso → puede colgarse)</option>
-            <option value="acceptEdits">acceptEdits (auto-aprueba ediciones)</option>
-            <option value="plan">plan (solo planifica)</option>
-            <option value="bypassPermissions">
-              bypassPermissions (autónomo total)
-            </option>
-          </select>
-          <div className="hint">
-            Para auto-mode usa acceptEdits o bypassPermissions (sin TTY no se
-            pueden responder permisos).
+            <Field
+              label="Branch base"
+              value={draft.base_branch}
+              onChange={(v) => set("base_branch", v)}
+              placeholder="main"
+            />
+            <Field
+              label="Branch destino (PR)"
+              value={draft.target_branch}
+              onChange={(v) => set("target_branch", v)}
+              placeholder="leo/automated"
+            />
+
+            <div className="span-2">
+              <label className="label">Reglas del proyecto (prompt)</label>
+              <textarea
+                className="textarea"
+                style={{ minHeight: 130 }}
+                value={draft.prompt_rules}
+                placeholder={PROMPT_PLACEHOLDER}
+                onChange={(e) => set("prompt_rules", e.target.value)}
+              />
+              <div className="hint">
+                Se inyecta en cada ejecución como reglas de puede / debe / no
+                puede / no debe.
+              </div>
+            </div>
           </div>
         </div>
-        <div>
-          <label className="label">Modelo (opcional)</label>
-          <ModelInput
-            value={draft.model}
-            onChange={(v) => set("model", v)}
-            placeholder="(usar el global)"
-          />
-        </div>
-      </div>
+      )}
 
-      <div>
-        <label className="label">Autenticación del modelo</label>
-        <select
-          className="select"
-          value={draft.auth_method}
-          onChange={(e) =>
-            set("auth_method", e.target.value as ProjectAuthMethod)
-          }
-        >
-          <option value="inherit">Heredar del global (Ajustes)</option>
-          <option value="subscription">Suscripción de Claude</option>
-          <option value="api-key">API key de Anthropic</option>
-        </select>
-        <div className="hint">
-          Override del método global solo para este proyecto.
-        </div>
-      </div>
+      {tab === "ejecucion" && (
+        <>
+          <div className="fieldset">
+            <div className="fieldset-title">Permisos y modelo</div>
+            <div className="fieldset-desc">
+              Cómo se autoriza Claude y qué modelo usa para este proyecto.
+            </div>
+            <div className="form-grid">
+              <div>
+                <label className="label">Modo de permisos</label>
+                <select
+                  className="select"
+                  value={draft.permission_mode}
+                  onChange={(e) =>
+                    set("permission_mode", e.target.value as PermissionMode)
+                  }
+                >
+                  <option value="default">
+                    default (pide permiso → puede colgarse)
+                  </option>
+                  <option value="acceptEdits">
+                    acceptEdits (auto-aprueba ediciones)
+                  </option>
+                  <option value="plan">plan (solo planifica)</option>
+                  <option value="bypassPermissions">
+                    bypassPermissions (autónomo total)
+                  </option>
+                </select>
+                <div className="hint">
+                  Para auto-mode usa acceptEdits o bypassPermissions (sin TTY no
+                  se pueden responder permisos).
+                </div>
+              </div>
+              <div>
+                <label className="label">Modelo (opcional)</label>
+                <ModelInput
+                  value={draft.model}
+                  onChange={(v) => set("model", v)}
+                  placeholder="(usar el global)"
+                />
+              </div>
+              <div className="span-2">
+                <label className="label">Autenticación del modelo</label>
+                <select
+                  className="select"
+                  value={draft.auth_method}
+                  onChange={(e) =>
+                    set("auth_method", e.target.value as ProjectAuthMethod)
+                  }
+                >
+                  <option value="inherit">Heredar del global (Ajustes)</option>
+                  <option value="subscription">Suscripción de Claude</option>
+                  <option value="api-key">API key de Anthropic</option>
+                </select>
+                <div className="hint">
+                  Override del método global solo para este proyecto.
+                </div>
+              </div>
+            </div>
+          </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-        <Field
-          label="allowedTools (opcional, coma)"
-          value={draft.allowed_tools}
-          onChange={(v) => set("allowed_tools", v)}
-          placeholder="Edit,Bash,mcp__supabase"
-        />
-        <Field
-          label="disallowedTools (opcional, coma)"
-          value={draft.disallowed_tools}
-          onChange={(v) => set("disallowed_tools", v)}
-          placeholder="Bash(rm*)"
-        />
-      </div>
+          <div className="fieldset">
+            <div className="fieldset-title">Herramientas y límites</div>
+            <div className="fieldset-desc">
+              Acota qué tools puede usar y cuántos turnos dura cada ejecución.
+            </div>
+            <div className="form-grid">
+              <Field
+                label="allowedTools (opcional, coma)"
+                value={draft.allowed_tools}
+                onChange={(v) => set("allowed_tools", v)}
+                placeholder="Edit,Bash,mcp__supabase"
+              />
+              <Field
+                label="disallowedTools (opcional, coma)"
+                value={draft.disallowed_tools}
+                onChange={(v) => set("disallowed_tools", v)}
+                placeholder="Bash(rm*)"
+              />
+              <Field
+                label="Máx. turnos (opcional)"
+                value={draft.max_turns}
+                onChange={(v) => set("max_turns", v.replace(/[^0-9]/g, ""))}
+                placeholder="sin límite"
+              />
+              <div style={{ display: "flex", alignItems: "end", gap: 18 }}>
+                <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <input
+                    type="checkbox"
+                    checked={draft.auto_mode}
+                    onChange={(e) => set("auto_mode", e.target.checked)}
+                  />
+                  <span style={{ fontSize: 13 }}>Auto-mode</span>
+                </label>
+                <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <input
+                    type="checkbox"
+                    checked={draft.enabled}
+                    onChange={(e) => set("enabled", e.target.checked)}
+                  />
+                  <span style={{ fontSize: 13 }}>Habilitado</span>
+                </label>
+              </div>
+            </div>
+          </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-        <Field
-          label="Máx. turnos (opcional)"
-          value={draft.max_turns}
-          onChange={(v) => set("max_turns", v.replace(/[^0-9]/g, ""))}
-          placeholder="sin límite"
-        />
-        <div style={{ display: "flex", alignItems: "end", gap: 18 }}>
-          <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <input
-              type="checkbox"
-              checked={draft.auto_mode}
-              onChange={(e) => set("auto_mode", e.target.checked)}
+          <div className="fieldset">
+            <div className="fieldset-title">Al terminar</div>
+            <div className="fieldset-desc">
+              Qué hacer con el issue de origen cuando el run termina bien.
+            </div>
+            <label style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <input
+                type="checkbox"
+                checked={draft.resolve_source_on_done}
+                onChange={(e) =>
+                  set("resolve_source_on_done", e.target.checked)
+                }
+              />
+              <span style={{ fontSize: 13 }}>
+                Al terminar con éxito, marcar el issue de origen como resuelto
+              </span>
+            </label>
+            <div className="hint">
+              Sentry: marca el issue como <code>resolved</code> cuando el run
+              termina bien (p. ej. tras abrir el PR). Solo aplica a tareas que
+              vienen de una integración.
+            </div>
+          </div>
+        </>
+      )}
+
+      {tab === "integraciones" && (
+        <>
+          <div className="fieldset">
+            <div className="fieldset-title">Servidores MCP</div>
+            <div className="fieldset-desc">
+              Herramientas extra para planeación y/o desarrollo.
+            </div>
+            <McpEditor
+              servers={draft.mcp_servers}
+              onChange={(m) => set("mcp_servers", m)}
+              strictMcp={draft.strict_mcp}
+              onStrictChange={(v) => set("strict_mcp", v)}
             />
-            <span style={{ fontSize: 13 }}>Auto-mode</span>
-          </label>
-          <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <input
-              type="checkbox"
-              checked={draft.enabled}
-              onChange={(e) => set("enabled", e.target.checked)}
+          </div>
+
+          <div className="fieldset">
+            <div className="fieldset-title">Fuentes de eventos</div>
+            <div className="fieldset-desc">
+              Listas e issues que alimentan los runs y la planeación.
+            </div>
+            <SourceEditor
+              sources={draft.sources}
+              integrations={integrations}
+              onChange={(s) => set("sources", s)}
             />
-            <span style={{ fontSize: 13 }}>Habilitado</span>
-          </label>
-        </div>
-      </div>
+          </div>
+        </>
+      )}
 
-      <div style={{ borderTop: "1px solid var(--border)", paddingTop: 14 }}>
-        <label style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <input
-            type="checkbox"
-            checked={draft.resolve_source_on_done}
-            onChange={(e) => set("resolve_source_on_done", e.target.checked)}
-          />
-          <span style={{ fontSize: 13 }}>
-            Al terminar con éxito, marcar el issue de origen como resuelto
-          </span>
-        </label>
-        <div className="hint">
-          Sentry: marca el issue como <code>resolved</code> cuando el run termina
-          bien (p. ej. tras abrir el PR). Solo aplica a tareas que vienen de una
-          integración.
-        </div>
-      </div>
+      {tab === "hooks" && (
+        <>
+          <div className="fieldset">
+            <div className="fieldset-title">Documentos de requerimientos</div>
+            <div className="fieldset-desc">
+              Especificaciones SDD / AIDLC que Leo inyecta en el contexto.
+            </div>
+            <label className="label">
+              Documentos de requerimientos (SDD / AIDLC)
+            </label>
+            <textarea
+              className="textarea"
+              style={{
+                minHeight: 60,
+                fontFamily: "var(--mono, monospace)",
+                fontSize: 13,
+              }}
+              value={draft.spec_globs}
+              placeholder={
+                "specs/**/*.md\n.aidlc/**/*.md\ndocs/requirements/**/*.md"
+              }
+              onChange={(e) => set("spec_globs", e.target.value)}
+            />
+            <div className="hint">
+              Globs (uno por línea o separados por coma) de los .md de
+              especificación. Leo los inyecta en el contexto de planeación y
+              desarrollo, y podrás leerlos desde la interfaz.
+            </div>
+          </div>
 
-      <div style={{ borderTop: "1px solid var(--border)", paddingTop: 14 }}>
-        <label className="label">
-          Documentos de requerimientos (SDD / AIDLC)
-        </label>
-        <textarea
-          className="textarea"
-          style={{ minHeight: 60, fontFamily: "var(--mono, monospace)", fontSize: 13 }}
-          value={draft.spec_globs}
-          placeholder={"specs/**/*.md\n.aidlc/**/*.md\ndocs/requirements/**/*.md"}
-          onChange={(e) => set("spec_globs", e.target.value)}
-        />
-        <div className="hint">
-          Globs (uno por línea o separados por coma) de los .md de
-          especificación. Leo los inyecta en el contexto de planeación y
-          desarrollo, y podrás leerlos desde la interfaz.
-        </div>
-      </div>
-
-      <McpEditor
-        servers={draft.mcp_servers}
-        onChange={(m) => set("mcp_servers", m)}
-        strictMcp={draft.strict_mcp}
-        onStrictChange={(v) => set("strict_mcp", v)}
-      />
-
-      <div style={{ borderTop: "1px solid var(--border)", paddingTop: 14 }}>
-        <label className="label">Hooks (settings JSON, opcional)</label>
-        <textarea
-          className="textarea"
-          style={{ minHeight: 90, fontFamily: "var(--mono, monospace)", fontSize: 12.5 }}
-          value={draft.hooks}
-          placeholder={`{
+          <div className="fieldset">
+            <div className="fieldset-title">Hooks</div>
+            <div className="fieldset-desc">
+              Validaciones y guardas automáticas vía <code>--settings</code>.
+            </div>
+            <label className="label">Hooks (settings JSON, opcional)</label>
+            <textarea
+              className="textarea"
+              style={{
+                minHeight: 90,
+                fontFamily: "var(--mono, monospace)",
+                fontSize: 12.5,
+              }}
+              value={draft.hooks}
+              placeholder={`{
   "PostToolUse": [
     { "matcher": "Edit|Write", "hooks": [
       { "type": "command", "command": "npm run lint --silent" }
     ]}
   ]
 }`}
-          onChange={(e) => set("hooks", e.target.value)}
-        />
-        <div className="hint">
-          Objeto <code>hooks</code> de Claude Code (PreToolUse/PostToolUse/Stop…).
-          Se pasa con <code>--settings</code> en las ejecuciones de desarrollo.
-          Útil para validaciones/guardas automáticas. Debe ser JSON válido.
-        </div>
-      </div>
+              onChange={(e) => set("hooks", e.target.value)}
+            />
+            <div className="hint">
+              Objeto <code>hooks</code> de Claude Code
+              (PreToolUse/PostToolUse/Stop…). Se pasa con{" "}
+              <code>--settings</code> en las ejecuciones de desarrollo. Útil
+              para validaciones/guardas automáticas. Debe ser JSON válido.
+            </div>
+          </div>
 
-      <div style={{ borderTop: "1px solid var(--border)", paddingTop: 14 }}>
-        <label style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <input
-            type="checkbox"
-            checked={draft.interactive}
-            onChange={(e) => set("interactive", e.target.checked)}
-          />
-          <span style={{ fontSize: 13 }}>
-            Permitir que Claude haga preguntas (MCP <code>leo</code> / ask_user)
-          </span>
-        </label>
-        <div className="hint">
-          Inyecta un MCP que deja a Claude pausar y preguntarte desde la UI. Aplica
-          tanto al <strong>refinamiento</strong> (pregunta lo necesario antes de
-          generar el plan; si hay docs SDD/AIDLC sigue ese marco) como a las
-          ejecuciones de desarrollo, en vez de asumir.
-        </div>
-      </div>
-
-      <SourceEditor
-        sources={draft.sources}
-        integrations={integrations}
-        onChange={(s) => set("sources", s)}
-      />
+          <div className="fieldset">
+            <div className="fieldset-title">Preguntas interactivas</div>
+            <div className="fieldset-desc">
+              Deja que Claude pause y te pregunte en vez de asumir.
+            </div>
+            <label style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <input
+                type="checkbox"
+                checked={draft.interactive}
+                onChange={(e) => set("interactive", e.target.checked)}
+              />
+              <span style={{ fontSize: 13 }}>
+                Permitir que Claude haga preguntas (MCP <code>leo</code> /
+                ask_user)
+              </span>
+            </label>
+            <div className="hint">
+              Inyecta un MCP que deja a Claude pausar y preguntarte desde la UI.
+              Aplica tanto al <strong>refinamiento</strong> (pregunta lo
+              necesario antes de generar el plan; si hay docs SDD/AIDLC sigue
+              ese marco) como a las ejecuciones de desarrollo, en vez de asumir.
+            </div>
+          </div>
+        </>
+      )}
     </div>
   );
 }

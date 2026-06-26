@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { api } from "@/components/client";
 import { Header } from "@/components/Header";
 import { timeAgo } from "@/components/format";
-import { ErrorBar, Field, Modal } from "@/components/ui";
+import { ErrorBar, Field, useConfirm } from "@/components/ui";
 import type { Integration, IntegrationType } from "@/lib/types";
 
 type Draft = {
@@ -28,6 +28,7 @@ export default function IntegrationsPage() {
   const [test, setTest] = useState<{ ok: boolean; message: string } | null>(null);
   const [testing, setTesting] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const { confirm, dialog } = useConfirm();
 
   const load = useCallback(async () => {
     setItems(await api.get("/api/integrations"));
@@ -92,9 +93,17 @@ export default function IntegrationsPage() {
     }
   };
 
-  const remove = async (id: number) => {
-    if (!confirm("¿Eliminar esta integración?")) return;
-    await api.del(`/api/integrations/${id}`);
+  const remove = async (it: Integration) => {
+    if (
+      !(await confirm({
+        title: "¿Eliminar integración?",
+        body: it.name,
+        confirmLabel: "Eliminar",
+        danger: true,
+      }))
+    )
+      return;
+    await api.del(`/api/integrations/${it.id}`);
     await load();
   };
 
@@ -113,13 +122,181 @@ export default function IntegrationsPage() {
         }
       />
 
-      {err && <ErrorBar text={err} />}
+      {err && !draft && <ErrorBar text={err} />}
+
+      {draft && (
+        <div className="card" style={{ padding: 22, marginBottom: 16 }}>
+          <div
+            className="sec-title"
+            style={{ fontSize: 16, marginBottom: 18 }}
+          >
+            {draft.id ? "Editar integración" : "Nueva integración"}
+          </div>
+          <div className="form-grid">
+            <div>
+              <label className="label">Tipo</label>
+              <select
+                className="select"
+                value={draft.type}
+                disabled={!!draft.id}
+                onChange={(e) =>
+                  setDraft({
+                    ...draft,
+                    type: e.target.value as IntegrationType,
+                    config: {},
+                  })
+                }
+              >
+                <option value="sentry">Sentry</option>
+                <option value="clickup">ClickUp</option>
+              </select>
+            </div>
+            <div>
+              <label className="label">Nombre</label>
+              <input
+                className="input"
+                value={draft.name}
+                placeholder="Ej. Sentry — Producción"
+                onChange={(e) => setDraft({ ...draft, name: e.target.value })}
+              />
+            </div>
+
+            {draft.type === "sentry" ? (
+              <>
+                <div className="span-2">
+                  <Field
+                    label="Auth token"
+                    hint="Internal Integration / Auth Token con scope project:read"
+                    type="password"
+                    value={draft.config.token ?? ""}
+                    onChange={(v) => setCfg("token", v)}
+                  />
+                </div>
+                <Field
+                  label="Organization slug"
+                  value={draft.config.org ?? ""}
+                  placeholder="mi-org"
+                  onChange={(v) => setCfg("org", v)}
+                />
+                <Field
+                  label="Base URL (opcional, self-hosted)"
+                  value={draft.config.baseUrl ?? ""}
+                  placeholder="https://sentry.io"
+                  onChange={(v) => setCfg("baseUrl", v)}
+                />
+              </>
+            ) : (
+              <>
+                <div className="span-2">
+                  <Field
+                    label="API token"
+                    hint="ClickUp → Settings → Apps → Generate (empieza con pk_)"
+                    type="password"
+                    value={draft.config.token ?? ""}
+                    onChange={(v) => setCfg("token", v)}
+                  />
+                </div>
+                <Field
+                  label="Team ID (opcional)"
+                  value={draft.config.teamId ?? ""}
+                  onChange={(v) => setCfg("teamId", v)}
+                />
+              </>
+            )}
+
+            <div style={{ alignSelf: "end" }}>
+              <label className="label">Estado</label>
+              <label
+                className="input"
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 8,
+                  cursor: "pointer",
+                }}
+              >
+                <input
+                  type="checkbox"
+                  checked={draft.enabled}
+                  onChange={(e) =>
+                    setDraft({ ...draft, enabled: e.target.checked })
+                  }
+                />
+                <span style={{ fontSize: 13 }}>
+                  Activa (incluir en el polling)
+                </span>
+              </label>
+            </div>
+
+            {test && (
+              <div
+                className={`span-2 badge ${test.ok ? "badge-ok" : "badge-danger"}`}
+                style={{
+                  display: "flex",
+                  width: "100%",
+                  padding: "10px 12px",
+                  borderRadius: 8,
+                  fontSize: 13,
+                }}
+              >
+                {test.ok ? "✓ " : "✕ "}
+                {test.message}
+              </div>
+            )}
+            {err && (
+              <div className="span-2">
+                <ErrorBar text={err} />
+              </div>
+            )}
+
+            <div
+              className="span-2"
+              style={{
+                display: "flex",
+                gap: 10,
+                justifyContent: "space-between",
+                alignItems: "center",
+                borderTop: "1px solid var(--border)",
+                marginTop: 4,
+                paddingTop: 18,
+              }}
+            >
+              <button className="btn" onClick={runTest} disabled={testing}>
+                {testing ? "Probando…" : "Probar conexión"}
+              </button>
+              <div style={{ display: "flex", gap: 10 }}>
+                <button className="btn" onClick={() => setDraft(null)}>
+                  Cancelar
+                </button>
+                <button
+                  className="btn btn-primary"
+                  onClick={save}
+                  disabled={!draft.name || !draft.config.token}
+                >
+                  Guardar
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {items.length === 0 ? (
-        <div className="card" style={{ padding: 28, textAlign: "center" }}>
-          <div className="muted">
-            No hay integraciones. Crea una conexión a Sentry o ClickUp para
-            empezar a recibir tareas.
+        <div
+          className="card"
+          style={{
+            padding: 40,
+            textAlign: "center",
+            display: "grid",
+            gap: 6,
+            placeItems: "center",
+          }}
+        >
+          <div className="ed-display" style={{ fontSize: 18 }}>
+            Sin integraciones
+          </div>
+          <div className="muted" style={{ maxWidth: 380 }}>
+            Crea una conexión a Sentry o ClickUp para empezar a recibir tareas.
           </div>
         </div>
       ) : (
@@ -131,7 +308,7 @@ export default function IntegrationsPage() {
                 <th>Tipo</th>
                 <th>Estado</th>
                 <th>Último poll</th>
-                <th></th>
+                <th aria-label="Acciones"></th>
               </tr>
             </thead>
             <tbody>
@@ -155,23 +332,30 @@ export default function IntegrationsPage() {
                       <span className="badge badge-dot">pausada</span>
                     )}
                   </td>
-                  <td className="muted" style={{ fontSize: 12 }}>
+                  <td className="muted mono" style={{ fontSize: 12 }}>
                     {timeAgo(it.last_polled_at)}
                   </td>
                   <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
-                    <button
-                      className="btn btn-sm"
-                      onClick={() => openEdit(it)}
-                      style={{ marginRight: 6 }}
+                    <div
+                      style={{
+                        display: "inline-flex",
+                        gap: 6,
+                        justifyContent: "flex-end",
+                      }}
                     >
-                      Editar
-                    </button>
-                    <button
-                      className="btn btn-sm btn-danger"
-                      onClick={() => remove(it.id)}
-                    >
-                      Eliminar
-                    </button>
+                      <button
+                        className="btn btn-sm"
+                        onClick={() => openEdit(it)}
+                      >
+                        Editar
+                      </button>
+                      <button
+                        className="btn btn-sm btn-danger"
+                        onClick={() => remove(it)}
+                      >
+                        Eliminar
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -180,118 +364,7 @@ export default function IntegrationsPage() {
         </div>
       )}
 
-      {draft && (
-        <Modal onClose={() => setDraft(null)} title={draft.id ? "Editar integración" : "Nueva integración"}>
-          <div style={{ display: "grid", gap: 14 }}>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-              <div>
-                <label className="label">Tipo</label>
-                <select
-                  className="select"
-                  value={draft.type}
-                  disabled={!!draft.id}
-                  onChange={(e) =>
-                    setDraft({
-                      ...draft,
-                      type: e.target.value as IntegrationType,
-                      config: {},
-                    })
-                  }
-                >
-                  <option value="sentry">Sentry</option>
-                  <option value="clickup">ClickUp</option>
-                </select>
-              </div>
-              <div>
-                <label className="label">Nombre</label>
-                <input
-                  className="input"
-                  value={draft.name}
-                  placeholder="Ej. Sentry — Producción"
-                  onChange={(e) => setDraft({ ...draft, name: e.target.value })}
-                />
-              </div>
-            </div>
-
-            {draft.type === "sentry" ? (
-              <>
-                <Field
-                  label="Auth token"
-                  hint="Internal Integration / Auth Token con scope project:read"
-                  type="password"
-                  value={draft.config.token ?? ""}
-                  onChange={(v) => setCfg("token", v)}
-                />
-                <Field
-                  label="Organization slug"
-                  value={draft.config.org ?? ""}
-                  placeholder="mi-org"
-                  onChange={(v) => setCfg("org", v)}
-                />
-                <Field
-                  label="Base URL (opcional, self-hosted)"
-                  value={draft.config.baseUrl ?? ""}
-                  placeholder="https://sentry.io"
-                  onChange={(v) => setCfg("baseUrl", v)}
-                />
-              </>
-            ) : (
-              <>
-                <Field
-                  label="API token"
-                  hint="ClickUp → Settings → Apps → Generate (empieza con pk_)"
-                  type="password"
-                  value={draft.config.token ?? ""}
-                  onChange={(v) => setCfg("token", v)}
-                />
-                <Field
-                  label="Team ID (opcional)"
-                  value={draft.config.teamId ?? ""}
-                  onChange={(v) => setCfg("teamId", v)}
-                />
-              </>
-            )}
-
-            <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              <input
-                type="checkbox"
-                checked={draft.enabled}
-                onChange={(e) => setDraft({ ...draft, enabled: e.target.checked })}
-              />
-              <span style={{ fontSize: 13 }}>Activa (incluir en el polling)</span>
-            </label>
-
-            {test && (
-              <div
-                className={`card ${test.ok ? "badge-ok" : "badge-danger"}`}
-                style={{ padding: "9px 12px", fontSize: 13 }}
-              >
-                {test.ok ? "✓ " : "✕ "}
-                {test.message}
-              </div>
-            )}
-            {err && <ErrorBar text={err} />}
-
-            <div style={{ display: "flex", gap: 10, justifyContent: "space-between" }}>
-              <button className="btn" onClick={runTest} disabled={testing}>
-                {testing ? "Probando…" : "Probar conexión"}
-              </button>
-              <div style={{ display: "flex", gap: 10 }}>
-                <button className="btn" onClick={() => setDraft(null)}>
-                  Cancelar
-                </button>
-                <button
-                  className="btn btn-primary"
-                  onClick={save}
-                  disabled={!draft.name || !draft.config.token}
-                >
-                  Guardar
-                </button>
-              </div>
-            </div>
-          </div>
-        </Modal>
-      )}
+      {dialog}
     </div>
   );
 }

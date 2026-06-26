@@ -11,7 +11,8 @@ import {
   planStepStatusLabel,
   timeAgo,
 } from "@/components/format";
-import { ErrorBar } from "@/components/ui";
+import { ErrorBar, useConfirm } from "@/components/ui";
+import { IconClipboard, IconDoc, IconQuestion } from "@/components/icons";
 import { Markdown } from "@/components/Markdown";
 import { PlanAttachments } from "@/components/PlanAttachments";
 import { PlanInteractions } from "@/components/PlanInteractions";
@@ -25,6 +26,7 @@ export default function PlanDetailPage() {
   const params = useParams<{ id: string }>();
   const id = Number(params.id);
   const router = useRouter();
+  const { confirm, dialog } = useConfirm();
 
   const [plan, setPlan] = useState<PlanWithSteps | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -33,6 +35,7 @@ export default function PlanDetailPage() {
   const [when, setWhen] = useState("");
   const [devStatus, setDevStatus] = useState<string | null>(null);
   const [editing, setEditing] = useState(false);
+  const [tab, setTab] = useState<"spec" | "steps" | "analysis" | null>(null);
   const dirty = useRef(false);
 
   const load = useCallback(async () => {
@@ -89,6 +92,13 @@ export default function PlanDetailPage() {
   const editable = !locked && (inputPhase || editing);
 
   const doneCount = plan.steps.filter((s) => s.status === "done").length;
+
+  // ---- review-phase read surfaces consolidated into tabs (run-page pattern) ----
+  const hasAnalysis = !refining && !!plan.refine_log;
+  const defaultTab = hasSteps ? "steps" : "spec";
+  let activeTab = tab ?? defaultTab;
+  if (activeTab === "steps" && !hasSteps) activeTab = "spec";
+  if (activeTab === "analysis" && !hasAnalysis) activeTab = defaultTab;
 
   const patch = (p: Partial<PlanWithSteps>) => {
     dirty.current = true;
@@ -187,6 +197,16 @@ export default function PlanDetailPage() {
       setMsg(r.message || "Listo.");
     });
 
+  const syncStatus = () =>
+    act("syncstatus", async () => {
+      const r = await api.post(`/api/plans/${id}/sync-status`);
+      if (r.plan) {
+        dirty.current = false;
+        setPlan(r.plan);
+      }
+      setMsg(r.message || "Listo.");
+    });
+
   const resyncClickup = () =>
     act("resync", async () => {
       const r = await api.post(`/api/plans/${id}/resync-clickup`);
@@ -218,7 +238,15 @@ export default function PlanDetailPage() {
     });
 
   const remove = async () => {
-    if (!confirm("¿Eliminar este plan y sus pasos?")) return;
+    if (
+      !(await confirm({
+        title: "¿Eliminar plan?",
+        body: "Se eliminará el plan y todos sus pasos. No se puede deshacer.",
+        confirmLabel: "Eliminar",
+        danger: true,
+      }))
+    )
+      return;
     await api.del(`/api/plans/${id}`).catch(() => {});
     router.push("/plans");
   };
@@ -242,9 +270,28 @@ export default function PlanDetailPage() {
         }`}
         right={
           <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-            <span className={planStatusBadgeClass(status)}>
-              {planStatusLabel(status)}
-            </span>
+            {dispatched ? (
+              <span
+                className="badge badge-running badge-dot"
+                style={{ whiteSpace: "nowrap" }}
+              >
+                En desarrollo · ClickUp
+              </span>
+            ) : done ? (
+              <span
+                className="badge badge-ok badge-dot"
+                style={{ whiteSpace: "nowrap" }}
+              >
+                Completado
+              </span>
+            ) : (
+              <span
+                className={planStatusBadgeClass(status)}
+                style={{ whiteSpace: "nowrap" }}
+              >
+                {planStatusLabel(status)}
+              </span>
+            )}
             <Link href="/plans" className="btn">
               ← Volver
             </Link>
@@ -337,9 +384,20 @@ export default function PlanDetailPage() {
             {busy === "cancel" ? "Deteniendo…" : "■ Detener"}
           </button>
         ) : dispatched ? (
-          <button className="btn" onClick={cancel} disabled={!!busy}>
-            {busy === "cancel" ? "…" : "↺ Volver a refinado"}
-          </button>
+          <>
+            <button
+              className="btn btn-primary"
+              onClick={syncStatus}
+              disabled={!!busy}
+              style={{ fontSize: 14, padding: "9px 16px" }}
+              title="Consulta la tarea origen en ClickUp y marca el plan como completado si desarrollo ya la terminó"
+            >
+              {busy === "syncstatus" ? "Comprobando…" : "↻ Comprobar estado en ClickUp"}
+            </button>
+            <button className="btn" onClick={cancel} disabled={!!busy}>
+              {busy === "cancel" ? "…" : "↺ Volver a refinado"}
+            </button>
+          </>
         ) : inputPhase ? (
           <button
             className="btn btn-primary"
@@ -415,8 +473,10 @@ export default function PlanDetailPage() {
           <RefineProgress planId={plan.id} refining={refining} />
         </>
       )}
-      {/* When not refining, keep the analysis available but collapsed. */}
-      {!refining && plan.refine_log && (
+      {/* In the input phase there are no review tabs, so keep the analysis
+          available as its own collapsed panel. In the review phase it lives in
+          the "Análisis" tab below. */}
+      {!refining && inputPhase && plan.refine_log && (
         <RefineProgress planId={plan.id} refining={false} />
       )}
 
@@ -499,118 +559,157 @@ export default function PlanDetailPage() {
             </div>
           )}
 
-          {/* Refined requirement (rendered) */}
-          <Section
-            title="Requerimiento refinado"
-            subtitle="El spec global que guía toda la ejecución"
-            right={
-              !locked && !editing ? (
-                <button className="btn btn-sm" onClick={() => setEditing(true)}>
-                  ✎ Editar
-                </button>
-              ) : undefined
-            }
-          >
-            {editable ? (
-              <textarea
-                className="textarea"
-                style={{ minHeight: 180 }}
-                value={plan.refined_spec}
-                onChange={(e) => patch({ refined_spec: e.target.value })}
-                placeholder="Aún sin refinar."
-              />
-            ) : plan.refined_spec.trim() ? (
-              <Markdown text={plan.refined_spec} />
-            ) : (
-              <div className="muted" style={{ fontSize: 13 }}>
-                Sin spec global. Los pasos de abajo contienen el detalle.
-              </div>
+          {/* Read surfaces as tabs (one panel, not a stack of cards) — mirrors
+              the run detail page (Resumen / Transcripción / Tarea). */}
+          <div className="tabbar">
+            <button
+              className={`tab${activeTab === "spec" ? " active" : ""}`}
+              onClick={() => setTab("spec")}
+            >
+              <IconDoc width={15} height={15} />
+              Requerimiento
+            </button>
+            {hasSteps && (
+              <button
+                className={`tab${activeTab === "steps" ? " active" : ""}`}
+                onClick={() => setTab("steps")}
+              >
+                <IconClipboard width={15} height={15} />
+                Pasos
+                <span className="muted" style={{ fontWeight: 500, marginLeft: 2 }}>
+                  {plan.steps.length}
+                </span>
+              </button>
             )}
-          </Section>
-
-          {/* Seed (collapsed) */}
-          <Collapsible summary="Requerimiento original (semilla)">
-            <div style={{ display: "grid", gap: 12, marginTop: 10 }}>
-              {editable ? (
-                <>
-                  <div>
-                    <label className="label">Título</label>
-                    <input
-                      className="input"
-                      value={plan.title}
-                      onChange={(e) => patch({ title: e.target.value })}
-                    />
-                  </div>
-                  <div>
-                    <label className="label">Objetivo / requerimiento crudo</label>
-                    <textarea
-                      className="textarea"
-                      style={{ minHeight: 80, fontFamily: "inherit" }}
-                      value={plan.objective}
-                      onChange={(e) => patch({ objective: e.target.value })}
-                    />
-                  </div>
-                </>
-              ) : (
-                <p style={{ fontSize: 13, lineHeight: 1.6, whiteSpace: "pre-wrap", margin: 0 }}>
-                  {plan.objective || <span className="muted">—</span>}
-                </p>
-              )}
-              {plan.source_url && (
-                <div className="hint">
-                  Origen:{" "}
-                  <a href={plan.source_url} target="_blank" rel="noreferrer">
-                    {plan.source_url}
-                  </a>
-                </div>
-              )}
-            </div>
-          </Collapsible>
-
-          {/* Steps */}
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "space-between",
-              margin: "22px 0 10px",
-            }}
-          >
-            <h2 style={{ fontSize: 15, fontWeight: 700, margin: 0 }}>
-              Pasos{" "}
-              <span className="muted" style={{ fontWeight: 500 }}>
-                ({plan.steps.length})
-              </span>
-            </h2>
-            {editable && (
-              <button className="btn btn-sm" onClick={addStep} disabled={!!busy}>
+            {hasAnalysis && (
+              <button
+                className={`tab${activeTab === "analysis" ? " active" : ""}`}
+                onClick={() => setTab("analysis")}
+              >
+                <IconQuestion width={15} height={15} />
+                Análisis
+              </button>
+            )}
+            <span style={{ flex: 1 }} />
+            {activeTab === "spec" && !locked && !editing && (
+              <button
+                className="btn btn-sm"
+                onClick={() => setEditing(true)}
+                style={{ alignSelf: "center" }}
+              >
+                ✎ Editar
+              </button>
+            )}
+            {activeTab === "steps" && editable && (
+              <button
+                className="btn btn-sm"
+                onClick={addStep}
+                disabled={!!busy}
+                style={{ alignSelf: "center" }}
+              >
                 + Agregar paso
               </button>
             )}
           </div>
 
-          {plan.steps.length === 0 ? (
-            <div className="card" style={{ padding: 22, textAlign: "center" }}>
-              <div className="muted" style={{ fontSize: 13 }}>
-                Sin pasos. Re-refina para descomponer el plan, o edítalo para
-                agregarlos a mano.
+          <div style={{ marginBottom: 16 }}>
+            {/* ---- Requerimiento: refined spec + original seed ---- */}
+            {activeTab === "spec" && (
+              <div className="card" style={{ padding: "18px 20px" }}>
+                <div className="fieldset">
+                  <h3 className="fieldset-title">Requerimiento refinado</h3>
+                  <p className="fieldset-desc">
+                    El spec global que guía toda la ejecución.
+                  </p>
+                  {editable ? (
+                    <textarea
+                      className="textarea"
+                      style={{ minHeight: 180 }}
+                      value={plan.refined_spec}
+                      onChange={(e) => patch({ refined_spec: e.target.value })}
+                      placeholder="Aún sin refinar."
+                    />
+                  ) : plan.refined_spec.trim() ? (
+                    <Markdown text={plan.refined_spec} />
+                  ) : (
+                    <div className="muted" style={{ fontSize: 13 }}>
+                      Sin spec global. Los pasos contienen el detalle.
+                    </div>
+                  )}
+                </div>
+
+                <div className="fieldset">
+                  <h3 className="fieldset-title">Requerimiento original (semilla)</h3>
+                  <p className="fieldset-desc">
+                    Lo que se usó como punto de partida del refinamiento.
+                  </p>
+                  {editable ? (
+                    <div className="form-grid">
+                      <div className="span-2">
+                        <label className="label">Título</label>
+                        <input
+                          className="input"
+                          value={plan.title}
+                          onChange={(e) => patch({ title: e.target.value })}
+                        />
+                      </div>
+                      <div className="span-2">
+                        <label className="label">Objetivo / requerimiento crudo</label>
+                        <textarea
+                          className="textarea"
+                          style={{ minHeight: 80, fontFamily: "inherit" }}
+                          value={plan.objective}
+                          onChange={(e) => patch({ objective: e.target.value })}
+                        />
+                      </div>
+                    </div>
+                  ) : (
+                    <p style={{ fontSize: 13, lineHeight: 1.6, whiteSpace: "pre-wrap", margin: 0 }}>
+                      {plan.objective || <span className="muted">—</span>}
+                    </p>
+                  )}
+                  {plan.source_url && (
+                    <div className="hint">
+                      Origen:{" "}
+                      <a href={plan.source_url} target="_blank" rel="noreferrer">
+                        {plan.source_url}
+                      </a>
+                    </div>
+                  )}
+                </div>
               </div>
-            </div>
-          ) : (
-            <div style={{ display: "grid", gap: 10 }}>
-              {plan.steps.map((s, i) => (
-                <StepCard
-                  key={s.id}
-                  step={s}
-                  index={i}
-                  editable={editable}
-                  busy={!!busy}
-                  onPatch={(sp) => patchStep(s.id, sp)}
-                  onRemove={() => removeStep(s.id)}
-                />
+            )}
+
+            {/* ---- Pasos ---- */}
+            {activeTab === "steps" &&
+              (plan.steps.length === 0 ? (
+                <div className="card" style={{ padding: 22, textAlign: "center" }}>
+                  <div className="muted" style={{ fontSize: 13 }}>
+                    Sin pasos. Re-refina para descomponer el plan, o edítalo para
+                    agregarlos a mano.
+                  </div>
+                </div>
+              ) : (
+                <div style={{ display: "grid", gap: 10 }}>
+                  {plan.steps.map((s, i) => (
+                    <StepCard
+                      key={s.id}
+                      step={s}
+                      index={i}
+                      editable={editable}
+                      busy={!!busy}
+                      onPatch={(sp) => patchStep(s.id, sp)}
+                      onRemove={() => removeStep(s.id)}
+                    />
+                  ))}
+                </div>
               ))}
-            </div>
-          )}
+
+            {/* ---- Análisis del refinamiento (its own card; no nesting) ---- */}
+            {activeTab === "analysis" && (
+              <RefineProgress planId={plan.id} refining={false} />
+            )}
+          </div>
         </>
       )}
 
@@ -678,6 +777,8 @@ export default function PlanDetailPage() {
           Eliminar plan
         </button>
       </div>
+
+      {dialog}
     </div>
   );
 }
@@ -851,25 +952,6 @@ function Section({
       </div>
       {children}
     </div>
-  );
-}
-
-function Collapsible({
-  summary,
-  children,
-}: {
-  summary: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <details className="card" style={{ padding: "12px 16px", marginBottom: 16 }}>
-      <summary
-        style={{ cursor: "pointer", fontSize: 13, fontWeight: 600, listStyle: "none" }}
-      >
-        ▸ {summary}
-      </summary>
-      {children}
-    </details>
   );
 }
 

@@ -4,10 +4,11 @@ import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { api } from "@/components/client";
 import { Header } from "@/components/Header";
-import { ErrorBar, Field, Modal } from "@/components/ui";
+import { ErrorBar, Field, Modal, useConfirm } from "@/components/ui";
 import type { Project } from "@/lib/types";
 
 export default function ProjectsPage() {
+  const { confirm, dialog } = useConfirm();
   const [items, setItems] = useState<Project[]>([]);
   const [err, setErr] = useState<string | null>(null);
   const [manualFor, setManualFor] = useState<Project | null>(null);
@@ -23,7 +24,15 @@ export default function ProjectsPage() {
   }, [load]);
 
   const remove = async (id: number) => {
-    if (!confirm("¿Eliminar este proyecto y sus tareas/runs?")) return;
+    if (
+      !(await confirm({
+        title: "Eliminar proyecto",
+        body: "¿Eliminar este proyecto y sus tareas/runs?",
+        confirmLabel: "Eliminar",
+        danger: true,
+      }))
+    )
+      return;
     await api.del(`/api/projects/${id}`);
     await load();
   };
@@ -120,6 +129,7 @@ export default function ProjectsPage() {
           onClose={() => setManualFor(null)}
         />
       )}
+      {dialog}
     </div>
   );
 }

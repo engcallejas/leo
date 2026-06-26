@@ -37,81 +37,101 @@ export default function SettingsPage() {
   if (!s) return <div className="muted">Cargando…</div>;
 
   return (
-    <div style={{ maxWidth: 620, margin: "0 auto" }}>
+    <div style={{ maxWidth: 720, margin: "0 auto" }}>
       <Header title="Ajustes" subtitle="Configuración global del orquestador" />
       {err && <ErrorBar text={err} />}
 
-      <AuthCard />
-      <ExecCard />
+      <div className="card" style={{ padding: 24 }}>
+        <AuthSection />
 
-      <div className="card" style={{ padding: 20, display: "grid", gap: 16 }}>
-        <Num
-          label="Intervalo de polling (segundos)"
-          hint="Cada cuánto el scheduler consulta Sentry/ClickUp. Mínimo 5."
-          value={s.poll_interval_seconds}
-          min={5}
-          onChange={(v) => setS({ ...s, poll_interval_seconds: v })}
-        />
-        <Num
-          label="Runs concurrentes máximos"
-          hint="Cuántos procesos de claude pueden correr a la vez."
-          value={s.max_concurrent_runs}
-          min={1}
-          onChange={(v) => setS({ ...s, max_concurrent_runs: v })}
-        />
-        <div>
-          <label className="label">Ruta del binario claude</label>
-          <input
-            className="input"
-            value={s.claude_binary_path}
-            onChange={(e) => setS({ ...s, claude_binary_path: e.target.value })}
-          />
-          <div className="hint">
-            Por defecto <code>claude</code> (debe estar en el PATH del proceso).
-            Usa una ruta absoluta si hace falta.
-          </div>
-        </div>
-        <label
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 10,
-            padding: "4px 0",
-          }}
-        >
-          <input
-            type="checkbox"
-            checked={s.auto_run_enabled}
-            onChange={(e) => setS({ ...s, auto_run_enabled: e.target.checked })}
-          />
-          <div>
-            <div style={{ fontSize: 13, fontWeight: 600 }}>
-              Auto-run global habilitado
-            </div>
-            <div className="hint" style={{ marginTop: 0 }}>
-              Interruptor maestro. Si está apagado, el scheduler sigue
-              consultando pero nunca ejecuta solo (los proyectos en auto-mode no
-              corren).
-            </div>
-          </div>
-        </label>
+        <ExecSection />
 
-        <div
-          style={{ display: "flex", gap: 10, alignItems: "center", marginTop: 4 }}
-        >
-          <button className="btn btn-primary" onClick={save}>
-            Guardar
-          </button>
-          {saved && (
-            <span className="badge badge-ok badge-dot">guardado</span>
-          )}
-        </div>
+        <section className="fieldset">
+          <h2 className="fieldset-title">Scheduler</h2>
+          <p className="fieldset-desc">
+            Ritmo del orquestador y límites de ejecución concurrente.
+          </p>
+
+          <div className="form-grid">
+            <Num
+              label="Intervalo de polling (segundos)"
+              hint="Cada cuánto el scheduler consulta Sentry/ClickUp. Mínimo 5."
+              value={s.poll_interval_seconds}
+              min={5}
+              onChange={(v) => setS({ ...s, poll_interval_seconds: v })}
+            />
+            <Num
+              label="Runs concurrentes máximos"
+              hint="Cuántos procesos de claude pueden correr a la vez."
+              value={s.max_concurrent_runs}
+              min={1}
+              onChange={(v) => setS({ ...s, max_concurrent_runs: v })}
+            />
+
+            <div className="span-2">
+              <label className="label">Ruta del binario claude</label>
+              <input
+                className="input"
+                value={s.claude_binary_path}
+                onChange={(e) =>
+                  setS({ ...s, claude_binary_path: e.target.value })
+                }
+              />
+              <div className="hint">
+                Por defecto <code>claude</code> (debe estar en el PATH del
+                proceso). Usa una ruta absoluta si hace falta.
+              </div>
+            </div>
+
+            <label
+              className="span-2"
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 10,
+                padding: "4px 0",
+              }}
+            >
+              <input
+                type="checkbox"
+                checked={s.auto_run_enabled}
+                onChange={(e) =>
+                  setS({ ...s, auto_run_enabled: e.target.checked })
+                }
+              />
+              <div>
+                <div style={{ fontSize: 13, fontWeight: 600 }}>
+                  Auto-run global habilitado
+                </div>
+                <div className="hint" style={{ marginTop: 0 }}>
+                  Interruptor maestro. Si está apagado, el scheduler sigue
+                  consultando pero nunca ejecuta solo (los proyectos en auto-mode
+                  no corren).
+                </div>
+              </div>
+            </label>
+          </div>
+
+          <div
+            style={{
+              display: "flex",
+              gap: 10,
+              alignItems: "center",
+              marginTop: 18,
+            }}
+          >
+            <button className="btn btn-primary" onClick={save}>
+              Guardar
+            </button>
+            {saved && <span className="badge badge-ok badge-dot">guardado</span>}
+          </div>
+        </section>
       </div>
     </div>
   );
 }
 
-function AuthCard() {
+function AuthSection() {
   const [auth, setAuth] = useState<AuthStatus | null>(null);
   const [token, setToken] = useState("");
   const [busy, setBusy] = useState(false);
@@ -177,143 +197,142 @@ function AuthCard() {
   const ok = auth?.authenticated;
 
   return (
-    <div className="card" style={{ padding: 20, marginBottom: 16 }}>
+    <section className="fieldset">
       <div
         style={{
           display: "flex",
           justifyContent: "space-between",
-          alignItems: "center",
-          marginBottom: 14,
+          alignItems: "flex-start",
+          gap: 12,
         }}
       >
-        <div style={{ fontWeight: 700, fontSize: 15 }}>
-          Autenticación de Claude
+        <div>
+          <h2 className="fieldset-title">Autenticación de Claude</h2>
+          <p className="fieldset-desc">
+            Leo ejecuta Claude Code con tu suscripción (nunca API key).
+          </p>
         </div>
-        <button
-          className="btn btn-sm"
-          onClick={() => load(true)}
-          disabled={busy}
-        >
+        <button className="btn btn-sm" onClick={() => load(true)} disabled={busy}>
           Revalidar
         </button>
       </div>
 
       <div
         style={{
-          display: "flex",
-          alignItems: "center",
-          gap: 10,
-          marginBottom: 14,
+          border: "1px solid var(--border)",
+          borderRadius: 10,
+          background: "var(--panel-2)",
+          padding: 16,
+          display: "grid",
+          gap: 14,
         }}
       >
-        <span
-          className={
-            ok
-              ? "badge badge-ok badge-dot"
-              : "badge badge-danger badge-dot"
-          }
-        >
-          {ok ? "Suscripción activa" : "No autenticado"}
-        </span>
-        {auth?.email && (
-          <span className="muted" style={{ fontSize: 13 }}>
-            {auth.email}
-            {auth.subscriptionType ? ` · plan ${auth.subscriptionType}` : ""}
-            {auth.authMethod ? ` · ${auth.authMethod}` : ""}
-          </span>
-        )}
-      </div>
-
-      {!ok && (
-        <div
-          className="muted"
-          style={{ fontSize: 12.5, lineHeight: 1.6, marginBottom: 14 }}
-        >
-          {auth?.loggedIn ? (
-            <>
-              Claude está autenticado por <b>API key / consola</b>, no por
-              suscripción. Leo solo usa suscripción.
-            </>
-          ) : (
-            <>
-              Leo ejecuta Claude Code con tu <b>suscripción</b> (nunca API key).
-            </>
-          )}
-          {auth?.error && (
-            <div style={{ marginTop: 6, color: "var(--danger)" }}>
-              {auth.error}
-            </div>
-          )}
-        </div>
-      )}
-
-      {!ok && auth?.canLaunchTerminal && (
-        <div style={{ marginBottom: 14 }}>
-          <button
-            className="btn btn-primary"
-            onClick={launchTerminal}
-            disabled={launching}
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <span
+            className={
+              ok ? "badge badge-ok badge-dot" : "badge badge-danger badge-dot"
+            }
           >
-            {launching
-              ? "Esperando autenticación en Terminal…"
-              : "🔑 Autenticar en Terminal"}
-          </button>
-          <div className="hint">
-            Abre una ventana de Terminal con <code>claude setup-token</code>.
-            Completa el login en el navegador; Leo lo detectará solo. (El token
-            impreso sirve también para Docker.)
+            {ok ? "Suscripción activa" : "No autenticado"}
+          </span>
+          {auth?.email && (
+            <span className="muted" style={{ fontSize: 13 }}>
+              {auth.email}
+              {auth.subscriptionType ? ` · plan ${auth.subscriptionType}` : ""}
+              {auth.authMethod ? ` · ${auth.authMethod}` : ""}
+            </span>
+          )}
+        </div>
+
+        {!ok && (
+          <div className="muted" style={{ fontSize: 12.5, lineHeight: 1.6 }}>
+            {auth?.loggedIn ? (
+              <>
+                Claude está autenticado por <b>API key / consola</b>, no por
+                suscripción. Leo solo usa suscripción.
+              </>
+            ) : (
+              <>
+                Leo ejecuta Claude Code con tu <b>suscripción</b> (nunca API
+                key).
+              </>
+            )}
+            {auth?.error && (
+              <div style={{ marginTop: 6, color: "var(--danger)" }}>
+                {auth.error}
+              </div>
+            )}
           </div>
-        </div>
-      )}
+        )}
 
-      {!ok && !auth?.canLaunchTerminal && (
-        <div className="hint" style={{ marginBottom: 12 }}>
-          En este entorno (Docker/Linux) genera el token en una máquina con tu
-          suscripción: <code>claude setup-token</code>, y pégalo aquí.
-        </div>
-      )}
-
-      {(!ok || auth?.hasStoredToken) && (
-        <div style={{ display: "grid", gap: 10 }}>
-          {!ok && (
-            <div style={{ display: "flex", gap: 10 }}>
-              <input
-                className="input"
-                type="password"
-                placeholder="CLAUDE_CODE_OAUTH_TOKEN (sk-ant-oat…)"
-                value={token}
-                onChange={(e) => setToken(e.target.value)}
-              />
-              <button
-                className="btn btn-primary"
-                onClick={saveToken}
-                disabled={busy || token.trim().length < 10}
-                style={{ whiteSpace: "nowrap" }}
-              >
-                Guardar token
-              </button>
+        {!ok && auth?.canLaunchTerminal && (
+          <div>
+            <button
+              className="btn btn-primary"
+              onClick={launchTerminal}
+              disabled={launching}
+            >
+              {launching
+                ? "Esperando autenticación en Terminal…"
+                : "Autenticar en Terminal"}
+            </button>
+            <div className="hint">
+              Abre una ventana de Terminal con <code>claude setup-token</code>.
+              Completa el login en el navegador; Leo lo detectará solo. (El token
+              impreso sirve también para Docker.)
             </div>
-          )}
-          {auth?.hasStoredToken && (
-            <div>
-              <button
-                className="btn btn-sm btn-danger"
-                onClick={clearToken}
-                disabled={busy}
-              >
-                Quitar token guardado
-              </button>
-            </div>
-          )}
-        </div>
-      )}
+          </div>
+        )}
 
-      {err && <div style={{ marginTop: 10 }}><ErrorBar text={err} /></div>}
-    </div>
+        {!ok && !auth?.canLaunchTerminal && (
+          <div className="hint" style={{ margin: 0 }}>
+            En este entorno (Docker/Linux) genera el token en una máquina con tu
+            suscripción: <code>claude setup-token</code>, y pégalo aquí.
+          </div>
+        )}
+
+        {(!ok || auth?.hasStoredToken) && (
+          <div style={{ display: "grid", gap: 10 }}>
+            {!ok && (
+              <div style={{ display: "flex", gap: 10 }}>
+                <input
+                  className="input"
+                  type="password"
+                  placeholder="CLAUDE_CODE_OAUTH_TOKEN (sk-ant-oat…)"
+                  value={token}
+                  onChange={(e) => setToken(e.target.value)}
+                />
+                <button
+                  className="btn btn-primary"
+                  onClick={saveToken}
+                  disabled={busy || token.trim().length < 10}
+                  style={{ whiteSpace: "nowrap" }}
+                >
+                  Guardar token
+                </button>
+              </div>
+            )}
+            {auth?.hasStoredToken && (
+              <div>
+                <button
+                  className="btn btn-sm btn-danger"
+                  onClick={clearToken}
+                  disabled={busy}
+                >
+                  Quitar token guardado
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+
+        {err && <ErrorBar text={err} />}
+      </div>
+    </section>
   );
 }
 
-function ExecCard() {
+function ExecSection() {
   const [cfg, setCfg] = useState<ExecConfig | null>(null);
   const [key, setKey] = useState("");
   const [test, setTest] = useState<{ ok: boolean; message: string } | null>(
@@ -376,93 +395,108 @@ function ExecCard() {
   };
 
   return (
-    <div
-      className="card"
-      style={{ padding: 20, marginBottom: 16, display: "grid", gap: 14 }}
-    >
-      <div style={{ fontWeight: 700, fontSize: 15 }}>Modelo y proveedor</div>
-      <div>
-        <label className="label">Método de autenticación (global)</label>
-        <select
-          className="select"
-          value={cfg.method}
-          onChange={(e) =>
-            setCfg({ ...cfg, method: e.target.value as AuthMethod })
-          }
-        >
-          <option value="subscription">Suscripción de Claude</option>
-          <option value="api-key">API key de Anthropic</option>
-        </select>
-        <div className="hint">
-          Cada proyecto puede heredar esto o forzar su propio método.
+    <section className="fieldset">
+      <h2 className="fieldset-title">Modelo y proveedor</h2>
+      <p className="fieldset-desc">
+        Método de autenticación global y el modelo por defecto de los proyectos.
+      </p>
+
+      <div className="form-grid">
+        <div>
+          <label className="label">Método de autenticación (global)</label>
+          <select
+            className="select"
+            value={cfg.method}
+            onChange={(e) =>
+              setCfg({ ...cfg, method: e.target.value as AuthMethod })
+            }
+          >
+            <option value="subscription">Suscripción de Claude</option>
+            <option value="api-key">API key de Anthropic</option>
+          </select>
+          <div className="hint">
+            Cada proyecto puede heredar esto o forzar su propio método.
+          </div>
         </div>
+
+        <div>
+          <label className="label">Modelo por defecto</label>
+          <ModelInput
+            value={cfg.defaultModel}
+            onChange={(v) => setCfg({ ...cfg, defaultModel: v })}
+            placeholder="(vacío = el que elija Claude Code)"
+          />
+          <div className="hint">
+            Se usa cuando un proyecto no especifica su propio modelo.
+          </div>
+        </div>
+
+        {cfg.method === "api-key" && (
+          <div className="span-2">
+            <label className="label">
+              ANTHROPIC_API_KEY{" "}
+              {cfg.apiKeySet && (
+                <span className="badge badge-ok badge-dot">configurada</span>
+              )}
+            </label>
+            <div style={{ display: "flex", gap: 8 }}>
+              <input
+                className="input"
+                type="password"
+                placeholder={
+                  cfg.apiKeySet ? "•••• (vacío = conservar)" : "sk-ant-..."
+                }
+                value={key}
+                onChange={(e) => setKey(e.target.value)}
+              />
+              <button className="btn" onClick={probar} disabled={busy}>
+                Probar
+              </button>
+              {cfg.apiKeySet && (
+                <button
+                  className="btn btn-danger"
+                  onClick={clearKey}
+                  disabled={busy}
+                >
+                  Quitar
+                </button>
+              )}
+            </div>
+            {test && (
+              <div
+                className={`card ${test.ok ? "badge-ok" : "badge-danger"}`}
+                style={{ padding: "8px 12px", fontSize: 13, marginTop: 8 }}
+              >
+                {test.message}
+              </div>
+            )}
+            <div className="hint">
+              Usa facturación por API (no suscripción). Se guarda en
+              data/leo.db.
+            </div>
+          </div>
+        )}
       </div>
 
-      {cfg.method === "api-key" && (
-        <div>
-          <label className="label">
-            ANTHROPIC_API_KEY{" "}
-            {cfg.apiKeySet && (
-              <span className="badge badge-ok badge-dot">configurada</span>
-            )}
-          </label>
-          <div style={{ display: "flex", gap: 8 }}>
-            <input
-              className="input"
-              type="password"
-              placeholder={
-                cfg.apiKeySet ? "•••• (vacío = conservar)" : "sk-ant-..."
-              }
-              value={key}
-              onChange={(e) => setKey(e.target.value)}
-            />
-            <button className="btn" onClick={probar} disabled={busy}>
-              Probar
-            </button>
-            {cfg.apiKeySet && (
-              <button
-                className="btn btn-danger"
-                onClick={clearKey}
-                disabled={busy}
-              >
-                Quitar
-              </button>
-            )}
-          </div>
-          {test && (
-            <div
-              className={`card ${test.ok ? "badge-ok" : "badge-danger"}`}
-              style={{ padding: "8px 12px", fontSize: 13, marginTop: 8 }}
-            >
-              {test.message}
-            </div>
-          )}
-          <div className="hint">
-            Usa facturación por API (no suscripción). Se guarda en data/leo.db.
-          </div>
+      {err && (
+        <div style={{ marginTop: 14 }}>
+          <ErrorBar text={err} />
         </div>
       )}
-
-      <div>
-        <label className="label">Modelo por defecto</label>
-        <ModelInput
-          value={cfg.defaultModel}
-          onChange={(v) => setCfg({ ...cfg, defaultModel: v })}
-          placeholder="(vacío = el que elija Claude Code)"
-        />
-        <div className="hint">
-          Se usa cuando un proyecto no especifica su propio modelo.
-        </div>
-      </div>
-
-      {err && <ErrorBar text={err} />}
-      <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+      <div
+        style={{
+          display: "flex",
+          gap: 10,
+          alignItems: "center",
+          marginTop: 18,
+        }}
+      >
         <button className="btn btn-primary" onClick={save} disabled={busy}>
           Guardar
         </button>
         {saved && <span className="badge badge-ok badge-dot">guardado</span>}
       </div>
-    </div>
+    </section>
   );
 }
 

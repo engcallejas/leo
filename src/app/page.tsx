@@ -11,6 +11,7 @@ import {
   taskStatusLabel,
   timeAgo,
 } from "@/components/format";
+import { useConfirm } from "@/components/ui";
 import type { AppSettings, Project, Run, Task } from "@/lib/types";
 
 export default function DashboardPage() {
@@ -268,6 +269,7 @@ function QueueItem({
 }) {
   const [when, setWhen] = useState("");
   const [busy, setBusy] = useState(false);
+  const { confirm, dialog } = useConfirm();
 
   const run = async () => {
     setBusy(true);
@@ -307,7 +309,14 @@ function QueueItem({
     }
   };
   const discard = async () => {
-    if (!confirm(`¿Descartar "${task.title}"? No se ejecutará ni se volverá a traer.`))
+    if (
+      !(await confirm({
+        title: "Descartar tarea",
+        body: `¿Descartar "${task.title}"? No se ejecutará ni se volverá a traer.`,
+        confirmLabel: "Descartar",
+        danger: true,
+      }))
+    )
       return;
     setBusy(true);
     try {
@@ -384,6 +393,7 @@ function QueueItem({
           Programar
         </button>
       </div>
+      {dialog}
     </div>
   );
 }

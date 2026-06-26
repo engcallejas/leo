@@ -1,19 +1,25 @@
 @import "tailwindcss";
 
 :root {
-  --bg: #0a0c10;
-  --panel: #12151b;
-  --panel-2: #171b22;
-  --border: #242a33;
-  --border-strong: #323a45;
-  --text: #e7eaee;
-  --muted: #8b95a1;
-  --accent: #7c93ff;
-  --accent-fg: #0a0c10;
-  --ok: #34d399;
-  --warn: #fbbf24;
-  --danger: #f87171;
-  --running: #60a5fa;
+  /* Light editorial console — the global theme. (Dark is scoped to .sidebar
+     and .term-body, which redefine these tokens locally.) */
+  --bg: #f1f3f6;
+  --panel: #ffffff;
+  --panel-2: #f6f7f9;
+  --border: #e5e8ed;
+  --border-strong: #d3d8e0;
+  --text: #14171c;
+  --muted: #5d6470;
+  --accent: #0c6b4a;
+  --accent-fg: #ffffff;
+  --ok: #0c6b4a;
+  --warn: #8a5a00;
+  --danger: #c0362f;
+  --running: #1a63c9;
+
+  --radius: 12px;
+  --shadow-sm: 0 1px 2px rgba(20, 23, 28, 0.05);
+  --shadow-md: 0 4px 16px rgba(20, 23, 28, 0.08);
 }
 
 @theme inline {
@@ -40,10 +46,12 @@ body {
   background: var(--bg);
   color: var(--text);
   font-family:
-    ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica,
-    Arial, sans-serif;
+    var(--font-sans), ui-sans-serif, system-ui, -apple-system, "Segoe UI",
+    Roboto, Helvetica, Arial, sans-serif;
   font-size: 14px;
   line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
 }
 
 a {
@@ -245,4 +253,331 @@ table.tbl {
 }
 .tbl tr:hover td {
   background: var(--panel-2);
+}
+
+/* ---------- shared polish ---------- */
+h1,
+h2,
+h3 {
+  text-wrap: balance;
+}
+:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 65%, transparent);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* ---------- run / executions UI ---------- */
+/* Live status: a pulsing ring that only animates while a run is running. */
+@keyframes leoPulse {
+  0% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, currentColor 50%, transparent);
+  }
+  70% {
+    box-shadow: 0 0 0 5px transparent;
+  }
+  100% {
+    box-shadow: 0 0 0 0 transparent;
+  }
+}
+.live-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: currentColor;
+  display: inline-block;
+  flex: none;
+  animation: leoPulse 1.8s ease-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .live-dot {
+    animation: none;
+  }
+}
+
+/* Compact metadata row for the run header (replaces equal stat boxes). */
+.meta-strip {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  row-gap: 12px;
+}
+.meta-item {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 0 18px;
+  border-left: 1px solid var(--border);
+}
+.meta-item:first-child {
+  padding-left: 0;
+  border-left: none;
+}
+.meta-k {
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+  font-weight: 600;
+}
+.meta-v {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Segmented control (e.g. PR mode). */
+.seg {
+  display: inline-flex;
+  padding: 3px;
+  gap: 2px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 9px;
+}
+.seg-btn {
+  padding: 6px 13px;
+  border-radius: 6px;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--muted);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  transition:
+    color 0.12s ease,
+    background 0.12s ease;
+}
+.seg-btn:hover:not([aria-pressed="true"]) {
+  color: var(--text);
+}
+.seg-btn[aria-pressed="true"] {
+  background: var(--panel-2);
+  color: var(--text);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
+}
+.seg-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+/* Section header chip (consistent icon + title across panels; no emoji). */
+.sec-ico {
+  flex: none;
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
+  color: var(--accent);
+  background: color-mix(in srgb, currentColor 13%, transparent);
+  border: 1px solid color-mix(in srgb, currentColor 24%, transparent);
+}
+
+/* Terminal / transcript console. */
+.term-body {
+  background: #06080c;
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  line-height: 1.65;
+}
+.term-line {
+  padding: 1px 0;
+  border-radius: 4px;
+}
+
+/* Run lineage tree connector in the list. */
+.tree-rail {
+  color: var(--border-strong);
+  font-family: var(--font-mono);
+  user-select: none;
+}
+
+/* Collapsible chevron rotation. */
+.chev {
+  display: inline-flex;
+  transition: transform 0.16s ease;
+}
+details[open] .chev {
+  transform: rotate(90deg);
+}
+@media (prefers-reduced-motion: reduce) {
+  .chev {
+    transition: none;
+  }
+}
+
+/* Form layout primitives: rule-separated sections + responsive 2-col grid.
+   Replaces giant single-column stacks and nested cards. */
+.form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px 20px;
+}
+@media (max-width: 760px) {
+  .form-grid {
+    grid-template-columns: 1fr;
+  }
+}
+.form-grid .span-2 {
+  grid-column: 1 / -1;
+}
+.fieldset + .fieldset {
+  border-top: 1px solid var(--border);
+  margin-top: 26px;
+  padding-top: 26px;
+}
+.fieldset-title {
+  font-family: var(--font-serif);
+  font-weight: 600;
+  font-size: 16px;
+  letter-spacing: -0.005em;
+  margin: 0 0 3px;
+}
+.fieldset-desc {
+  color: var(--muted);
+  font-size: 12.5px;
+  margin: 0 0 16px;
+  line-height: 1.5;
+}
+
+/* Underline tabs (read surfaces). */
+.tabbar {
+  display: flex;
+  gap: 2px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 18px;
+}
+.tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 10px 14px;
+  font-size: 13.5px;
+  font-weight: 500;
+  color: var(--muted);
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  cursor: pointer;
+  transition:
+    color 0.12s ease,
+    border-color 0.12s ease;
+}
+.tab:hover {
+  color: var(--text);
+}
+.tab.active {
+  color: var(--text);
+  border-bottom-color: var(--accent);
+  font-weight: 600;
+}
+
+/* ============================================================
+   Editorial console — global theme overrides
+   (these come after the base component rules, so they win and
+   re-tune the few hardcoded-dark values for the light theme).
+   ============================================================ */
+.ed-display {
+  font-family: var(--font-serif);
+  font-weight: 500;
+  letter-spacing: -0.01em;
+}
+.sec-title {
+  font-family: var(--font-serif);
+  font-weight: 600;
+  font-size: 15.5px;
+  letter-spacing: 0;
+}
+
+.btn:hover {
+  background: #eef0f4;
+}
+.btn-primary {
+  box-shadow: 0 1px 1px rgba(12, 107, 74, 0.18);
+}
+.btn-primary:hover {
+  background: #0a5b3f;
+}
+.btn-danger {
+  border-color: #f0cdc9;
+}
+.btn-danger:hover {
+  background: #fbece9;
+}
+.card {
+  box-shadow: var(--shadow-sm);
+}
+
+.badge-ok {
+  background: #e9f5ef;
+  border-color: #c4e3d2;
+}
+.badge-running {
+  background: #e9f1fc;
+  border-color: #cbddf7;
+}
+.badge-warn {
+  background: #fbf2e2;
+  border-color: #ecdcb4;
+}
+.badge-danger {
+  background: #fbece9;
+  border-color: #f2cdc8;
+}
+
+.meta-v {
+  font-family: var(--font-mono);
+  font-size: 14px;
+}
+.seg-btn[aria-pressed="true"] {
+  box-shadow: 0 1px 2px rgba(20, 23, 28, 0.12);
+}
+
+/* The transcript stays a DARK terminal pane on the light app — restore the
+   bright console colors and a light default ink inside it. */
+.term-body {
+  --accent: #7c93ff;
+  --ok: #34d399;
+  --running: #60a5fa;
+  --warn: #fbbf24;
+  --danger: #f87171;
+  color: #ced5df;
+}
+.term-line:hover {
+  background: rgba(255, 255, 255, 0.03);
+}
+
+/* ---------- the left rail stays dark (anchor + logo backdrop) ---------- */
+.sidebar {
+  --bg: #0b0d12;
+  --panel: #101319;
+  --panel-2: #161a21;
+  --border: #20262f;
+  --border-strong: #2c333d;
+  --text: #e8ebef;
+  --muted: #8a94a0;
+  --accent: #2fd498;
+  --accent-fg: #07130d;
+  --ok: #34d399;
+  --warn: #fbbf24;
+  --danger: #f87171;
+  --running: #60a5fa;
+}
+.sidebar .btn:hover {
+  background: #1c222b;
+}
+.sidebar .card {
+  box-shadow: none;
+}
+.sidebar-group {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+  padding: 0 12px;
+  margin: 16px 0 6px;
 }

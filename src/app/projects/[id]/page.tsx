@@ -11,13 +11,14 @@ import {
   projectToDraft,
   type Draft,
 } from "@/components/ProjectForm";
-import { ErrorBar } from "@/components/ui";
+import { ErrorBar, useConfirm } from "@/components/ui";
 import type { Integration, Project } from "@/lib/types";
 
 export default function EditProjectPage() {
   const params = useParams<{ id: string }>();
   const id = Number(params.id);
   const router = useRouter();
+  const { confirm, dialog } = useConfirm();
   const [draft, setDraft] = useState<Draft | null>(null);
   const [project, setProject] = useState<Project | null>(null);
   const [integrations, setIntegrations] = useState<Integration[]>([]);
@@ -54,7 +55,15 @@ export default function EditProjectPage() {
   };
 
   const remove = async () => {
-    if (!confirm("¿Eliminar este proyecto y sus tareas/runs?")) return;
+    if (
+      !(await confirm({
+        title: "Eliminar proyecto",
+        body: "¿Eliminar este proyecto y sus tareas/runs?",
+        confirmLabel: "Eliminar",
+        danger: true,
+      }))
+    )
+      return;
     await api.del(`/api/projects/${id}`).catch(() => {});
     router.push("/projects");
   };
@@ -116,6 +125,7 @@ export default function EditProjectPage() {
           </div>
         </div>
       </div>
+      {dialog}
     </div>
   );
 }

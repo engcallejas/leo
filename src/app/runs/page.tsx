@@ -3,7 +3,6 @@
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "@/components/client";
-import { Header } from "@/components/Header";
 import {
   fmtCost,
   fmtDuration,
@@ -82,8 +81,19 @@ export default function RunsPage() {
   const forest = useMemo(() => buildRunForest(runs), [runs]);
 
   return (
+    <div className="ed">
     <div style={{ maxWidth: 1100, margin: "0 auto" }}>
-      <Header title="Ejecuciones" subtitle="Historial de runs de Claude Code" />
+      <div style={{ marginBottom: 24 }}>
+        <h1
+          className="ed-display"
+          style={{ margin: 0, fontSize: 30, fontWeight: 500, letterSpacing: "-0.015em" }}
+        >
+          Ejecuciones
+        </h1>
+        <div className="muted" style={{ fontSize: 13, marginTop: 4 }}>
+          Historial de runs de Claude Code
+        </div>
+      </div>
 
       {runs.length === 0 ? (
         <div className="card" style={{ padding: 28, textAlign: "center" }}>
@@ -126,31 +136,39 @@ export default function RunsPage() {
                     >
                       {depth > 0 && (
                         <span
-                          className="muted mono"
+                          className="tree-rail"
                           title={`Iteración de #${r.parent_run_id}`}
-                          style={{ fontSize: 12 }}
+                          style={{ fontSize: 13 }}
                         >
                           └─
                         </span>
                       )}
                       <span>{taskTitle(r.task_id).slice(0, 60)}</span>
-                      {depth > 0 && (
-                        <span className="badge" style={{ fontSize: 10 }}>
-                          ↩ iter de #{r.parent_run_id}
-                        </span>
-                      )}
-                      {depth === 0 && r.parent_run_id != null && (
-                        <span className="badge" style={{ fontSize: 10 }}>
-                          ↩ de #{r.parent_run_id}
+                      {r.parent_run_id != null && (
+                        <span
+                          className="badge"
+                          style={{ fontSize: 10, fontWeight: 500 }}
+                        >
+                          ↩ #{r.parent_run_id}
                         </span>
                       )}
                     </span>
                   </td>
                   <td className="muted">{projName(r.project_id)}</td>
                   <td>
-                    <span className={statusBadgeClass(r.status)}>
-                      {runStatusLabel(r.status)}
-                    </span>
+                    {r.status === "running" ? (
+                      <span
+                        className="badge badge-running"
+                        style={{ gap: 6, fontWeight: 600 }}
+                      >
+                        <span className="live-dot" />
+                        {runStatusLabel(r.status)}
+                      </span>
+                    ) : (
+                      <span className={statusBadgeClass(r.status)}>
+                        {runStatusLabel(r.status)}
+                      </span>
+                    )}
                   </td>
                   <td className="muted" style={{ fontSize: 12 }}>
                     {fmtCost(r.cost_usd)}
@@ -170,6 +188,7 @@ export default function RunsPage() {
           </table>
         </div>
       )}
+    </div>
     </div>
   );
 }

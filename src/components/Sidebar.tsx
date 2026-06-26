@@ -3,28 +3,52 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
+import {
+  IconBox,
+  IconClipboard,
+  IconGear,
+  IconGrid,
+  IconPlay,
+  IconPlug,
+  LeoMark,
+} from "@/components/icons";
+import type { SVGProps } from "react";
 
-const LINKS = [
-  { href: "/", label: "Dashboard", icon: "◧" },
-  { href: "/projects", label: "Proyectos", icon: "▤" },
-  { href: "/plans", label: "Planeación", icon: "❑" },
-  { href: "/integrations", label: "Integraciones", icon: "⚇" },
-  { href: "/runs", label: "Ejecuciones", icon: "▶" },
-  { href: "/settings", label: "Ajustes", icon: "⚙" },
+type NavItem = {
+  href: string;
+  label: string;
+  Icon: (p: SVGProps<SVGSVGElement>) => React.ReactElement;
+};
+
+const GROUPS: { label: string | null; items: NavItem[] }[] = [
+  { label: null, items: [{ href: "/", label: "Dashboard", Icon: IconGrid }] },
+  {
+    label: "Orquestación",
+    items: [
+      { href: "/projects", label: "Proyectos", Icon: IconBox },
+      { href: "/plans", label: "Planeación", Icon: IconClipboard },
+      { href: "/runs", label: "Ejecuciones", Icon: IconPlay },
+    ],
+  },
+  {
+    label: "Sistema",
+    items: [
+      { href: "/integrations", label: "Integraciones", Icon: IconPlug },
+      { href: "/settings", label: "Ajustes", Icon: IconGear },
+    ],
+  },
 ];
 
 interface SchedStatus {
   scheduler: { started: boolean; lastTickAt: string | null; activeRuns: number };
   counts: { runningRuns: number; pendingTasks: number };
 }
-
 interface AuthLite {
   authenticated: boolean;
   loggedIn: boolean;
   email: string | null;
   subscriptionType: string | null;
 }
-
 interface ExecLite {
   method: "subscription" | "api-key";
   apiKeySet: boolean;
@@ -68,148 +92,171 @@ export function Sidebar() {
     };
   }, []);
 
+  const usingKey = exec?.method === "api-key" && exec.apiKeySet;
+  const authOk = usingKey || !!auth?.authenticated;
+  const schedOk = !!status?.scheduler.started;
+
   return (
     <aside
+      className="sidebar"
       style={{
-        width: 232,
+        width: 236,
         borderRight: "1px solid var(--border)",
-        padding: "20px 14px",
+        padding: "18px 14px 14px",
         position: "sticky",
         top: 0,
         height: "100vh",
         display: "flex",
         flexDirection: "column",
-        gap: 4,
-        background: "var(--panel)",
+        background: "var(--bg)",
+        color: "var(--text)",
       }}
     >
-      <div style={{ padding: "4px 12px 18px", display: "flex", alignItems: "center", gap: 10 }}>
-        <div
+      {/* Brand */}
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 11,
+          padding: "4px 10px 6px",
+        }}
+      >
+        <span
           style={{
-            width: 30,
-            height: 30,
-            borderRadius: 8,
-            background: "var(--accent)",
-            color: "var(--accent-fg)",
+            width: 36,
+            height: 36,
+            borderRadius: 10,
+            background: "#070a10",
+            border: "1px solid var(--border)",
             display: "grid",
             placeItems: "center",
-            fontWeight: 800,
-            fontSize: 16,
+            color: "var(--accent)",
+            flex: "none",
           }}
         >
-          L
-        </div>
-        <div>
-          <div style={{ fontWeight: 700, fontSize: 15 }}>Leo</div>
-          <div className="muted" style={{ fontSize: 11 }}>
-            Claude Code orchestrator
-          </div>
-        </div>
+          <LeoMark width={23} height={23} />
+        </span>
+        <span
+          style={{
+            fontFamily: "var(--font-serif)",
+            fontWeight: 600,
+            fontSize: 21,
+            letterSpacing: "-0.01em",
+          }}
+        >
+          Leo
+        </span>
       </div>
 
-      {LINKS.map((l) => {
-        const active =
-          l.href === "/" ? pathname === "/" : pathname.startsWith(l.href);
-        return (
-          <Link
-            key={l.href}
-            href={l.href}
-            className={`nav-link ${active ? "active" : ""}`}
-          >
-            <span style={{ width: 16, textAlign: "center", opacity: 0.8 }}>
-              {l.icon}
-            </span>
-            {l.label}
-          </Link>
-        );
-      })}
+      {/* Nav groups */}
+      <nav style={{ display: "flex", flexDirection: "column", gap: 2, marginTop: 6 }}>
+        {GROUPS.map((g, gi) => (
+          <div key={gi}>
+            {g.label && <div className="sidebar-group">{g.label}</div>}
+            {g.items.map((it) => {
+              const active =
+                it.href === "/"
+                  ? pathname === "/"
+                  : pathname.startsWith(it.href);
+              return (
+                <Link
+                  key={it.href}
+                  href={it.href}
+                  className={`nav-link ${active ? "active" : ""}`}
+                  style={{ position: "relative" }}
+                >
+                  <it.Icon
+                    width={17}
+                    height={17}
+                    style={{ opacity: active ? 1 : 0.7, flex: "none" }}
+                  />
+                  {it.label}
+                </Link>
+              );
+            })}
+          </div>
+        ))}
+      </nav>
 
       <div style={{ marginTop: "auto" }} />
 
+      {/* System status */}
       <Link
         href="/settings"
         className="card"
+        style={{ padding: "11px 13px", background: "var(--panel-2)", display: "block" }}
+      >
+        <StatusRow
+          ok={authOk}
+          title={
+            usingKey ? "API key activa" : authOk ? "Suscripción activa" : "No autenticado"
+          }
+          sub={
+            usingKey
+              ? "Anthropic API key"
+              : authOk
+                ? `${auth?.email ?? ""}${auth?.subscriptionType ? ` · ${auth.subscriptionType}` : ""}`
+                : "Configura tu modelo/auth →"
+          }
+        />
+        <div style={{ height: 1, background: "var(--border)", margin: "10px 0" }} />
+        <StatusRow
+          ok={schedOk}
+          neutralOff
+          title={`Scheduler ${schedOk ? "activo" : "detenido"}`}
+          sub={
+            status
+              ? `${status.scheduler.activeRuns} corriendo · ${status.counts.pendingTasks} pendientes`
+              : "cargando…"
+          }
+        />
+      </Link>
+    </aside>
+  );
+}
+
+function StatusRow({
+  ok,
+  title,
+  sub,
+  neutralOff,
+}: {
+  ok: boolean;
+  title: string;
+  sub: string;
+  neutralOff?: boolean;
+}) {
+  const color = ok ? "var(--ok)" : neutralOff ? "var(--muted)" : "var(--danger)";
+  return (
+    <div>
+      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <span
+          className={ok ? "live-dot" : ""}
+          style={{
+            width: 8,
+            height: 8,
+            borderRadius: 999,
+            background: color,
+            color,
+            display: "inline-block",
+            flex: "none",
+          }}
+        />
+        <span style={{ fontSize: 12.5, fontWeight: 600 }}>{title}</span>
+      </div>
+      <div
+        className="muted"
         style={{
-          padding: "10px 12px",
-          background: "var(--panel-2)",
-          marginBottom: 8,
+          fontSize: 11,
+          marginTop: 4,
+          paddingLeft: 16,
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+          whiteSpace: "nowrap",
         }}
       >
-        {(() => {
-          const usingKey = exec?.method === "api-key" && exec.apiKeySet;
-          const ok = usingKey || !!auth?.authenticated;
-          return (
-            <>
-              <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
-                <span
-                  style={{
-                    width: 8,
-                    height: 8,
-                    borderRadius: 999,
-                    background: ok ? "var(--ok)" : "var(--danger)",
-                    boxShadow: ok ? "0 0 8px var(--ok)" : "none",
-                  }}
-                />
-                <span style={{ fontSize: 12, fontWeight: 600 }}>
-                  {usingKey
-                    ? "API key activa"
-                    : ok
-                      ? "Suscripción activa"
-                      : "No autenticado"}
-                </span>
-              </div>
-              <div
-                className="muted"
-                style={{
-                  fontSize: 11,
-                  marginTop: 5,
-                  overflow: "hidden",
-                  textOverflow: "ellipsis",
-                  whiteSpace: "nowrap",
-                }}
-              >
-                {usingKey
-                  ? "Anthropic API key"
-                  : ok
-                    ? `${auth?.email ?? ""}${auth?.subscriptionType ? ` · ${auth.subscriptionType}` : ""}`
-                    : "Configura tu modelo/auth →"}
-              </div>
-            </>
-          );
-        })()}
-      </Link>
-
-      <div
-        className="card"
-        style={{ padding: "11px 12px", background: "var(--panel-2)" }}
-      >
-        <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
-          <span
-            style={{
-              width: 8,
-              height: 8,
-              borderRadius: 999,
-              background: status?.scheduler.started ? "var(--ok)" : "var(--muted)",
-              boxShadow: status?.scheduler.started
-                ? "0 0 8px var(--ok)"
-                : "none",
-            }}
-          />
-          <span style={{ fontSize: 12, fontWeight: 600 }}>
-            Scheduler {status?.scheduler.started ? "activo" : "—"}
-          </span>
-        </div>
-        <div className="muted" style={{ fontSize: 11, marginTop: 6 }}>
-          {status ? (
-            <>
-              {status.scheduler.activeRuns} corriendo · {status.counts.pendingTasks}{" "}
-              pendientes
-            </>
-          ) : (
-            "cargando…"
-          )}
-        </div>
+        {sub}
       </div>
-    </aside>
+    </div>
   );
 }

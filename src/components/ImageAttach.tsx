@@ -1,6 +1,7 @@
 "use client";
 
 import { type ClipboardEvent, useRef } from "react";
+import { IconPaperclip } from "@/components/icons";
 
 /**
  * Extract image File(s) from a paste event (⌘/Ctrl+V). Wire this to a textarea's
@@ -33,7 +34,7 @@ export function ImageAttach({
   files,
   onChange,
   disabled,
-  label = "📎 Adjuntar imagen",
+  label = "Adjuntar imagen",
 }: {
   files: File[];
   onChange: (files: File[]) => void;
@@ -46,14 +47,15 @@ export function ImageAttach({
     <div>
       <button
         type="button"
-        className="btn"
+        className="btn btn-sm"
         disabled={disabled}
         onClick={() => inputRef.current?.click()}
-        style={{ fontSize: 12.5 }}
+        style={{ gap: 6 }}
       >
+        <IconPaperclip width={14} height={14} />
         {label}
       </button>
-      <span className="muted" style={{ fontSize: 11.5, marginLeft: 8 }}>
+      <span className="muted" style={{ fontSize: 11.5, marginLeft: 9 }}>
         o pégala con ⌘/Ctrl+V
       </span>
       <input
@@ -75,7 +77,8 @@ export function ImageAttach({
               className="badge"
               style={{ display: "inline-flex", gap: 6, alignItems: "center" }}
             >
-              🖼️ {f.name}
+              <IconPaperclip width={12} height={12} />
+              {f.name}
               {!disabled && (
                 <button
                   type="button"

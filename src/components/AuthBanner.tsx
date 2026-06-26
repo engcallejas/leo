@@ -49,9 +49,9 @@ export function AuthBanner() {
   return (
     <div
       style={{
-        background: "#241316",
-        border: "1px solid #4a2730",
-        color: "#fca5a5",
+        background: "color-mix(in srgb, var(--danger) 8%, var(--panel))",
+        border: "1px solid color-mix(in srgb, var(--danger) 28%, var(--border))",
+        color: "var(--text)",
         borderRadius: 10,
         padding: "11px 14px",
         marginBottom: 18,
@@ -62,14 +62,10 @@ export function AuthBanner() {
       }}
     >
       <div style={{ fontSize: 13 }}>
-        <strong style={{ color: "#fecaca" }}>⚠ Autenticación requerida.</strong>{" "}
+        <strong style={{ color: "var(--danger)" }}>Autenticación requerida.</strong>{" "}
         {reason}
       </div>
-      <Link
-        href="/settings"
-        className="btn btn-sm"
-        style={{ borderColor: "#4a2730", whiteSpace: "nowrap" }}
-      >
+      <Link href="/settings" className="btn btn-sm" style={{ whiteSpace: "nowrap" }}>
         Configurar →
       </Link>
     </div>

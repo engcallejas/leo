@@ -4,6 +4,8 @@ import { useCallback, useEffect, useState } from "react";
 import { api } from "@/components/client";
 import { timeAgo } from "@/components/format";
 import { ImageAttach, imageFilesFromPaste } from "@/components/ImageAttach";
+import { SectionHeader } from "@/components/Section";
+import { IconChat, IconPaperclip } from "@/components/icons";
 import type { RunNote } from "@/lib/types";
 
 /**
@@ -55,39 +57,45 @@ export function RunNotes({ runId, active }: { runId: number; active: boolean }) 
   if (!active && notes.length === 0) return null;
 
   return (
-    <div className="card" style={{ padding: 14, marginBottom: 16 }}>
-      <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 4 }}>
-        💬 Instrucciones para el agente
-      </div>
-      <div className="hint" style={{ marginTop: 0, marginBottom: 10 }}>
-        Envía correcciones sobre la marcha. Leo las inyecta automáticamente en
-        cuanto el agente termina su siguiente herramienta, y le impide cerrar la
-        tarea mientras haya notas sin entregar — así llegan en segundos/minutos,
-        no al instante. Aplica a runs iniciados con esta versión.
-      </div>
+    <section className="card" style={{ padding: 18, marginBottom: 18 }}>
+      <SectionHeader
+        icon={<IconChat />}
+        accent={active ? "var(--running)" : "var(--muted)"}
+        title={active ? "Instrucciones para el agente" : "Instrucciones enviadas"}
+        desc={
+          active
+            ? "Envía correcciones sobre la marcha: Leo se las inyecta cuando el agente termina su siguiente herramienta y le impide cerrar mientras queden sin entregar."
+            : "Historial de instrucciones de steering de esta ejecución."
+        }
+      />
 
       {notes.length > 0 && (
-        <div style={{ display: "grid", gap: 8, marginBottom: active ? 12 : 0 }}>
+        <div style={{ display: "grid", gap: 8, marginBottom: active ? 14 : 0 }}>
           {notes.map((n) => (
             <div
               key={n.id}
               style={{
-                padding: "8px 11px",
-                borderRadius: 8,
+                padding: "10px 12px",
+                borderRadius: 9,
                 background: "var(--panel-2)",
                 border: "1px solid var(--border)",
               }}
             >
               {n.text && (
-                <div style={{ fontSize: 13, whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>
+                <div style={{ fontSize: 13, whiteSpace: "pre-wrap", overflowWrap: "anywhere", lineHeight: 1.5 }}>
                   {n.text}
                 </div>
               )}
               {n.images.length > 0 && (
-                <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: n.text ? 6 : 0 }}>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: n.text ? 7 : 0 }}>
                   {n.images.map((im, i) => (
-                    <span key={i} className="badge" style={{ fontSize: 10 }}>
-                      🖼️ {im.filename}
+                    <span
+                      key={i}
+                      className="badge"
+                      style={{ fontSize: 10.5, gap: 5 }}
+                    >
+                      <IconPaperclip width={11} height={11} />
+                      {im.filename}
                     </span>
                   ))}
                 </div>
@@ -159,6 +167,6 @@ export function RunNotes({ runId, active }: { runId: number; active: boolean }) 
           </div>
         </div>
       )}
-    </div>
+    </section>
   );
 }
