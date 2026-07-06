@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { api } from "@/components/client";
 import { ImageAttach, imageFilesFromPaste } from "@/components/ImageAttach";
+import { useLaunchGuard } from "@/components/launch";
 import { SectionHeader } from "@/components/Section";
 import { IconIterate } from "@/components/icons";
 import type { Run } from "@/lib/types";
@@ -23,6 +24,7 @@ export function RunIterate({ run }: { run: Run }) {
   const [images, setImages] = useState<File[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const { guard, dialog: launchDialog } = useLaunchGuard();
 
   // Only finished runs can be iterated.
   if (run.status === "running") return null;
@@ -30,6 +32,12 @@ export function RunIterate({ run }: { run: Run }) {
   const launch = async () => {
     const text = instruction.trim();
     if (!text || busy) return;
+    // If another run is in flight on this repo, offer worktree isolation. A
+    // worktree iteration starts fresh (a resumed session points at the shared
+    // checkout), so it can't clobber the run already running.
+    const mode = await guard(run.project_id);
+    if (mode === null) return;
+    const worktree = mode === "worktree";
     setBusy(true);
     setError(null);
     try {
@@ -37,6 +45,7 @@ export function RunIterate({ run }: { run: Run }) {
       form.set("instruction", text);
       form.set("compact", compact ? "1" : "0");
       form.set("prMode", prMode);
+      form.set("worktree", worktree ? "1" : "0");
       for (const f of images) form.append("file", f);
       const next: Run = await api.postForm(`/api/runs/${run.id}/iterate`, form);
       router.push(`/runs/${next.id}`);
@@ -182,6 +191,7 @@ export function RunIterate({ run }: { run: Run }) {
             : "⌘/Ctrl + Enter"}
         </span>
       </div>
+      {launchDialog}
     </section>
   );
 }

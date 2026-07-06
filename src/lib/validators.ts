@@ -108,3 +108,9 @@ export const planUpdateSchema = z.object({
 export const planEnqueueSchema = z.object({
   scheduled_for: z.string().nullable().optional(),
 });
+
+export const planRefineSchema = z.object({
+  // Optional human feedback: when present (and the plan already has output), the
+  // refinement iterates on the existing plan instead of rebuilding from scratch.
+  feedback: z.string().max(8000).optional(),
+});

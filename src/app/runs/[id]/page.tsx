@@ -1,10 +1,11 @@
 "use client";
 
 import Link from "next/link";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "@/components/client";
 import { fmtCost, fmtDuration, runStatusLabel, timeAgo } from "@/components/format";
+import { useLaunchGuard } from "@/components/launch";
 import { Markdown } from "@/components/Markdown";
 import { RunInteractions } from "@/components/RunInteractions";
 import { RunIterate } from "@/components/RunIterate";
@@ -25,12 +26,16 @@ interface LogEntry {
 
 export default function RunDetailPage() {
   const params = useParams<{ id: string }>();
+  const router = useRouter();
   const id = Number(params.id);
   const [run, setRun] = useState<Run | null>(null);
   const [task, setTask] = useState<Task | null>(null);
   const [entries, setEntries] = useState<LogEntry[]>([]);
   const [raw, setRaw] = useState(false);
   const [tab, setTab] = useState<"resumen" | "transcript" | "task" | null>(null);
+  const [retrying, setRetrying] = useState(false);
+  const [retryMsg, setRetryMsg] = useState<string | null>(null);
+  const { guard, dialog: launchDialog } = useLaunchGuard();
   const bufferRef = useRef("");
   const logBoxRef = useRef<HTMLDivElement>(null);
 
@@ -82,6 +87,32 @@ export default function RunDetailPage() {
     await loadMeta();
   };
 
+  // Retry a failed/cancelled run: re-run its task fresh (guarded for a busy repo).
+  const retry = async () => {
+    if (!run) return;
+    const mode = await guard(run.project_id);
+    if (mode === null) return;
+    setRetrying(true);
+    setRetryMsg(null);
+    try {
+      const r = await api.post(`/api/tasks/${run.task_id}/run`, {
+        worktree: mode === "worktree",
+      });
+      if (r?.run?.id) {
+        router.push(`/runs/${r.run.id}`);
+      } else if (r?.queued) {
+        setRetryMsg("En cola — se ejecutará en cuanto haya un espacio libre.");
+        setRetrying(false);
+      } else {
+        setRetryMsg(r?.reason || "No se pudo reintentar.");
+        setRetrying(false);
+      }
+    } catch (e) {
+      setRetryMsg((e as Error).message);
+      setRetrying(false);
+    }
+  };
+
   if (!run) {
     return (
       <div className="ed">
@@ -121,12 +152,33 @@ export default function RunDetailPage() {
         >
           <IconArrowLeft width={15} height={15} /> Ejecuciones
         </Link>
-        {running && (
+        {running ? (
           <button className="btn btn-danger" onClick={stop} style={{ gap: 7 }}>
             <IconStop width={15} height={15} /> Detener run
           </button>
+        ) : (
+          (run.status === "failed" || run.status === "cancelled") && (
+            <button
+              className="btn btn-primary"
+              onClick={retry}
+              disabled={retrying}
+              style={{ gap: 7 }}
+              title="Vuelve a ejecutar esta tarea desde cero"
+            >
+              ↻ {retrying ? "Reintentando…" : "Reintentar"}
+            </button>
+          )
         )}
       </div>
+
+      {retryMsg && (
+        <div
+          className="card"
+          style={{ padding: "9px 12px", marginBottom: 14, fontSize: 13 }}
+        >
+          {retryMsg}
+        </div>
+      )}
 
       {/* ---- Run identity + metadata (no equal-box grid) ---- */}
       <header style={{ marginBottom: 22 }}>
@@ -348,6 +400,7 @@ export default function RunDetailPage() {
       <RunIterate run={run} />
       <RunNotes runId={run.id} active={running} />
       </div>
+      {launchDialog}
     </div>
   );
 }

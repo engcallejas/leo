@@ -104,6 +104,9 @@ CREATE TABLE IF NOT EXISTS runs (
   result_summary TEXT,
   error          TEXT,
   log_path       TEXT NOT NULL,
+  -- When set, this run executed in an isolated git worktree at this path
+  -- (parallel run on a busy repo). Cleared by the GC once it's removed.
+  worktree_path  TEXT,
   started_at     TEXT NOT NULL DEFAULT (datetime('now')),
   finished_at    TEXT
 );
@@ -162,6 +165,18 @@ CREATE TABLE IF NOT EXISTS plan_attachments (
 );
 
 CREATE INDEX IF NOT EXISTS idx_plan_attachments_plan ON plan_attachments(plan_id);
+
+-- Human feedback on a plan. Each comment seeds an iterative refinement: Claude
+-- revises the EXISTING refined spec + steps to address it, instead of starting
+-- from the seed again. Kept as a thread so the user sees what they've asked.
+CREATE TABLE IF NOT EXISTS plan_comments (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  plan_id    INTEGER NOT NULL REFERENCES plans(id) ON DELETE CASCADE,
+  body       TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_plan_comments_plan ON plan_comments(plan_id);
 
 -- Interactions are raised either during a task run (run_id) or during a plan
 -- refinement (plan_id); exactly one of the two is set. Both are nullable so the

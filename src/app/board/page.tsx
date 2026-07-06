@@ -18,6 +18,7 @@ import {
   presetDays,
   withinDate,
 } from "@/components/filters";
+import { useLaunchGuard } from "@/components/launch";
 import { Drawer, ErrorBar, useConfirm, useToast } from "@/components/ui";
 import type { BoardCard, BoardColumn, Project } from "@/lib/types";
 
@@ -31,6 +32,8 @@ function canMove(card: BoardCard, target: BoardColumn): { illegal?: string } {
   if (card.kind === "plan") {
     if (target === "fuentes")
       return { illegal: "Un plan no puede volver a Fuentes." };
+    if (target === "backlog")
+      return { illegal: "Los planes no entran a Por desarrollar; encólalos." };
     if (
       target === "cola" &&
       card.status !== "refined" &&
@@ -61,6 +64,7 @@ export default function BoardPage() {
   const [creating, setCreating] = useState(false);
 
   const { confirm, dialog } = useConfirm();
+  const { guard, dialog: launchDialog } = useLaunchGuard();
   const { show, toast } = useToast();
 
   // Keep refs so the polling loop can pause without re-creating the interval.
@@ -123,6 +127,13 @@ export default function BoardPage() {
         });
         if (!ok) return;
       }
+      // A manual task run/retry while its repo is busy → offer worktree isolation.
+      let worktree = false;
+      if ((action === "run" || action === "retry") && card.kind === "task") {
+        const mode = await guard(card.project_id);
+        if (mode === null) return;
+        worktree = mode === "worktree";
+      }
       setBusyKey(card.key);
       try {
         let msg = "";
@@ -148,10 +159,27 @@ export default function BoardPage() {
               await api.post("/api/poll");
               msg = "Ejecución en marcha (scheduler)";
             } else {
-              const r = await api.post(`/api/tasks/${card.id}/run`);
-              msg = r?.started ? "Ejecución iniciada" : r?.queued ? "En cola" : "Solicitada";
+              const r = await api.post(`/api/tasks/${card.id}/run`, { worktree });
+              msg = r?.started
+                ? worktree
+                  ? "Ejecución iniciada (worktree)"
+                  : "Ejecución iniciada"
+                : r?.queued
+                  ? "En cola"
+                  : "Solicitada";
             }
             break;
+          case "retry": {
+            const r = await api.post(`/api/tasks/${card.id}/run`, { worktree });
+            msg = r?.started
+              ? worktree
+                ? "Reintentada (worktree)"
+                : "Reintentada"
+              : r?.queued
+                ? "En cola"
+                : r?.reason || "Solicitada";
+            break;
+          }
           case "cancel":
             await api.post(`/api/plans/${card.id}/cancel`, {});
             msg = "Devuelta a planeación";
@@ -187,12 +215,13 @@ export default function BoardPage() {
         setBusyKey(null);
       }
     },
-    [confirm, load, show],
+    [confirm, guard, load, show],
   );
 
   // Free drag-between-columns: map any target column to the right operation.
   const doMove = useCallback(
     async (card: BoardCard, target: BoardColumn) => {
+      let worktree = false;
       if (target === "ejecucion") {
         const ok = await confirm({
           title: "Ejecutar ahora",
@@ -200,6 +229,11 @@ export default function BoardPage() {
           confirmLabel: "Ejecutar",
         });
         if (!ok) return;
+        if (card.kind === "task") {
+          const mode = await guard(card.project_id);
+          if (mode === null) return;
+          worktree = mode === "worktree";
+        }
       }
       if (
         card.kind === "plan" &&
@@ -226,6 +260,13 @@ export default function BoardPage() {
               });
               msg = "Devuelta a Fuentes";
               break;
+            case "backlog":
+              await api.post(`/api/tasks/${card.id}/status`, {
+                status: "pending",
+                closed: false,
+              });
+              msg = "Movida a Por desarrollar";
+              break;
             case "planeacion":
               await api.post(`/api/projects/${card.project_id}/plans`, {
                 from_task_id: card.id,
@@ -237,9 +278,11 @@ export default function BoardPage() {
               msg = "En cola";
               break;
             case "ejecucion": {
-              const r = await api.post(`/api/tasks/${card.id}/run`);
+              const r = await api.post(`/api/tasks/${card.id}/run`, { worktree });
               msg = r?.started
-                ? "Ejecución iniciada"
+                ? worktree
+                  ? "Ejecución iniciada (worktree)"
+                  : "Ejecución iniciada"
                 : r?.queued
                   ? "En cola"
                   : "Solicitada";
@@ -305,7 +348,7 @@ export default function BoardPage() {
         setBusyKey(null);
       }
     },
-    [confirm, load, show],
+    [confirm, guard, load, show],
   );
 
   const syncSources = async () => {
@@ -363,7 +406,7 @@ export default function BoardPage() {
     >
       <Header
         title="Tablero"
-        subtitle="El ciclo completo: fuentes → planeación → cola → ejecución → revisión → cerrada"
+        subtitle="El ciclo completo: fuentes → planeación → por desarrollar → cola → ejecución → revisión → cerrada"
         right={
           <div style={{ display: "flex", gap: 10 }}>
             <button className="btn" onClick={syncSources} disabled={syncing}>
@@ -486,6 +529,7 @@ export default function BoardPage() {
         />
       )}
       {dialog}
+      {launchDialog}
       {toast}
     </div>
   );
@@ -534,7 +578,7 @@ function NewTaskDrawer({
   return (
     <Drawer
       title="Nueva tarea"
-      subtitle="Se añade a Fuentes, lista para refinar o ejecutar"
+      subtitle="Se añade a Por desarrollar, lista para ejecutar o promover a planeación"
       onClose={onClose}
     >
       <div>
@@ -631,6 +675,28 @@ function Card({
           {label}
         </span>
       </div>
+      {(card.is_iteration || card.is_worktree) && (
+        <div style={{ display: "flex", gap: 6, marginTop: 6, flexWrap: "wrap" }}>
+          {card.is_iteration && card.run_id != null && (
+            <span
+              className="badge"
+              style={{ fontSize: 10, fontWeight: 600 }}
+              title={`Iteración · ejecución #${card.run_id}`}
+            >
+              ↻ iteración #{card.run_id}
+            </span>
+          )}
+          {card.is_worktree && (
+            <span
+              className="badge"
+              style={{ fontSize: 10, fontWeight: 600 }}
+              title="Ejecutándose en un git worktree aislado (en paralelo)"
+            >
+              ⑂ worktree
+            </span>
+          )}
+        </div>
+      )}
       {card.sub && <div className="board-card-sub" style={{ marginTop: 6 }}>{card.sub}</div>}
     </div>
   );

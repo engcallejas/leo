@@ -2,6 +2,7 @@ import { query, queryOne, run } from "./db";
 import type {
   Plan,
   PlanAttachment,
+  PlanComment,
   PlanStatus,
   PlanStep,
   PlanStepStatus,
@@ -79,7 +80,11 @@ export async function getPlanWithSteps(
 ): Promise<PlanWithSteps | null> {
   const plan = await getPlan(id);
   if (!plan) return null;
-  return { ...plan, steps: await listSteps(id) };
+  const [steps, comments] = await Promise.all([
+    listSteps(id),
+    listPlanComments(id),
+  ]);
+  return { ...plan, steps, comments };
 }
 
 export async function listPlans(filter?: {
@@ -163,8 +168,44 @@ export async function deletePlan(id: number): Promise<void> {
   // Explicit child cleanup (FK cascade isn't reliably enforced on this client).
   await run("DELETE FROM plan_steps WHERE plan_id = ?", [id]);
   await run("DELETE FROM plan_attachments WHERE plan_id = ?", [id]);
+  await run("DELETE FROM plan_comments WHERE plan_id = ?", [id]);
   await run("DELETE FROM run_interactions WHERE plan_id = ?", [id]);
   await run("DELETE FROM plans WHERE id = ?", [id]);
+}
+
+// ---------- plan comments (human feedback for iterative refinement) ----------
+type CommentRow = Record<string, unknown>;
+
+function mapComment(r: CommentRow): PlanComment {
+  return {
+    id: Number(r.id),
+    plan_id: Number(r.plan_id),
+    body: String(r.body ?? ""),
+    created_at: String(r.created_at),
+  };
+}
+
+export async function listPlanComments(planId: number): Promise<PlanComment[]> {
+  const rows = await query<CommentRow>(
+    "SELECT * FROM plan_comments WHERE plan_id = ? ORDER BY id ASC",
+    [planId],
+  );
+  return rows.map(mapComment);
+}
+
+export async function addPlanComment(
+  planId: number,
+  body: string,
+): Promise<PlanComment> {
+  const res = await run(
+    "INSERT INTO plan_comments (plan_id, body) VALUES (?, ?)",
+    [planId, body],
+  );
+  const r = await queryOne<CommentRow>(
+    "SELECT * FROM plan_comments WHERE id = ?",
+    [res.lastInsertRowid],
+  );
+  return mapComment(r!);
 }
 
 // ---------- plan steps ----------

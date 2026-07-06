@@ -34,6 +34,7 @@ import {
   buildRunExtras,
   mergeAllowedTools,
 } from "./run-config";
+import { createRunWorktree } from "./worktree";
 
 /** How an iteration should finalize: keep the current PR vs. open a new one. */
 export type PrMode = "commit" | "new_pr";
@@ -151,6 +152,7 @@ function buildArgs(
   model: string | null,
   allowedTools: string | null,
   extraArgs: string[],
+  workdir: string,
 ): string[] {
   const args = ["-p", prompt, "--output-format", "stream-json", "--verbose"];
   if (project.permission_mode === "bypassPermissions") {
@@ -171,7 +173,7 @@ function buildArgs(
     args.push("--max-turns", String(project.max_turns));
   }
   args.push(...extraArgs);
-  args.push("--add-dir", project.repo_path);
+  args.push("--add-dir", workdir);
   return args;
 }
 
@@ -449,6 +451,7 @@ export async function startRun(
   project: Project,
   chain?: ChainContext,
   iteration?: IterationOpts,
+  opts?: { worktree?: boolean },
 ): Promise<Run> {
   const settings = await getSettings(project.account_id);
 
@@ -481,6 +484,33 @@ export async function startRun(
     return failRun(runRow.id, task.id, logPath, gate.reason ?? "No ejecutable");
   }
   const exec = await resolveProjectExec(project);
+
+  // Worktree mode: run in an isolated checkout so it doesn't clobber a run
+  // already in flight on this repo. workdir is where claude runs (cwd + the
+  // granted --add-dir); the shared repo is never exposed to a worktree run.
+  let workdir = project.repo_path;
+  let worktreeBranch: string | null = null;
+  let worktreeBase: string | null = null;
+  if (opts?.worktree) {
+    try {
+      const wt = createRunWorktree(
+        project.repo_path,
+        runRow.id,
+        project.base_branch || null,
+      );
+      workdir = wt.path;
+      worktreeBranch = wt.branch;
+      worktreeBase = project.base_branch || "HEAD";
+      await updateRun(runRow.id, { worktree_path: wt.path });
+    } catch (e) {
+      return failRun(
+        runRow.id,
+        task.id,
+        logPath,
+        `No se pudo crear el worktree aislado: ${(e as Error).message}`,
+      );
+    }
+  }
 
   // Enrich the prompt with fresh source context (ClickUp description, comments,
   // attachments/images, etc.). Best-effort — never blocks the run.
@@ -519,6 +549,13 @@ export async function startRun(
       ? `\n\n## Capturas para ClickUp\nSi generas screenshots/capturas (p. ej. en la verificación visual), guárdalas como archivos de imagen en "${artifactsDir}". Leo las adjuntará automáticamente a la tarea de ClickUp al terminar con éxito.`
       : "";
 
+  // Worktree runs execute in parallel with another run on the same repo, in an
+  // isolated checkout already on a fresh branch. Tell the agent so it stays in
+  // this worktree and finalizes on its own branch.
+  const worktreeNote = worktreeBranch
+    ? `\n\n## Worktree aislado (ejecución en paralelo)\nEstás trabajando en un git worktree AISLADO ("${workdir}"), ya sobre la branch nueva "${worktreeBranch}" derivada de "${worktreeBase}". Hay otra ejecución en curso sobre el MISMO repositorio en otro directorio, así que:\n- Trabaja SOLO dentro de este worktree; no toques rutas fuera de él.\n- Haz commit y push sobre "${worktreeBranch}" (o una branch derivada de ella) y abre el Pull Request desde ahí.\n- No cambies a "${worktreeBase}" ni a la branch de la otra ejecución.`
+    : "";
+
   // Images the human attached to an iteration (read by the agent via Read).
   const iterAttachBlock = iteration
     ? buildAttachmentBlock(
@@ -537,7 +574,7 @@ export async function startRun(
       iteration.parentRunId,
       iteration.prMode,
       iterAttachBlock,
-    )}${interactiveNote}${artifactNote}`;
+    )}${interactiveNote}${artifactNote}${worktreeNote}`;
   } else {
     // Fresh run (incl. compacted iterations): give full task context, plus the
     // prior summary + the requested adjustment when this is an iteration.
@@ -556,7 +593,7 @@ export async function startRun(
       )}`;
     }
     const basePrompt = buildPrompt(project, task, ctx, chain);
-    prompt = `${basePrompt}${specContext ? `\n\n${specContext}` : ""}${interactiveNote}${artifactNote}${iterAjuste}`;
+    prompt = `${basePrompt}${specContext ? `\n\n${specContext}` : ""}${interactiveNote}${artifactNote}${worktreeNote}${iterAjuste}`;
   }
 
   // Per-run MCP servers (dev scope) + hooks settings + the Leo ask_user MCP
@@ -576,20 +613,25 @@ export async function startRun(
   const iterArgs = iteration?.resumeSessionId
     ? ["--resume", iteration.resumeSessionId, "--fork-session"]
     : [];
-  const args = buildArgs(project, prompt, exec.model, allowedTools, [
-    ...extras.args,
-    ...iterArgs,
-    "--add-dir",
-    artifactsDir,
-  ]);
+  const args = buildArgs(
+    project,
+    prompt,
+    exec.model,
+    allowedTools,
+    [...extras.args, ...iterArgs, "--add-dir", artifactsDir],
+    workdir,
+  );
   appendLine(logPath, {
     type: "leo_start",
     bin: settings.claude_binary_path,
-    cwd: project.repo_path,
+    cwd: workdir,
     permission_mode: project.permission_mode,
     auth_method: exec.method,
     model: exec.model,
     mcp: extras.allowedMcpTools,
+    ...(worktreeBranch
+      ? { worktree: workdir, worktree_branch: worktreeBranch }
+      : {}),
     ...(iteration
       ? {
           iteration_of: iteration.parentRunId,
@@ -615,7 +657,7 @@ export async function startRun(
   }
   try {
     child = spawn(settings.claude_binary_path, args, {
-      cwd: project.repo_path,
+      cwd: workdir,
       env: await buildClaudeEnv({
         accountId: project.account_id,
         method: exec.method,
@@ -668,7 +710,12 @@ export async function startRun(
 export async function iterateRun(
   parentRunId: number,
   instruction: string,
-  opts: { compact?: boolean; prMode?: PrMode; images?: AttachedImage[] } = {},
+  opts: {
+    compact?: boolean;
+    prMode?: PrMode;
+    images?: AttachedImage[];
+    worktree?: boolean;
+  } = {},
 ): Promise<Run> {
   const parent = await getRun(parentRunId);
   if (!parent) throw new Error("Run no encontrado.");
@@ -689,9 +736,22 @@ export async function iterateRun(
     prMode: opts.prMode ?? "commit",
     images: opts.images ?? [],
   };
+  const wt = opts.worktree ? { worktree: true } : undefined;
 
   // Reflect that the task is being worked on again until the new run finalizes.
   await setTaskStatus(task.id, "running").catch(() => {});
+
+  // A resumed session remembers absolute paths in the SHARED checkout, so
+  // resuming it inside an isolated worktree would edit the main repo and defeat
+  // the isolation. For worktree iterations always start fresh from a summary so
+  // the agent discovers files anew in the worktree.
+  if (opts.worktree) {
+    let summary = parent.result_summary ?? "";
+    if (canResume && opts.compact) {
+      summary = (await compactSession(project, parent.session_id!)) ?? summary;
+    }
+    return startRun(task, project, undefined, { ...base, seedSummary: summary }, wt);
+  }
 
   if (canResume && opts.compact) {
     const summary = await compactSession(project, parent.session_id!);

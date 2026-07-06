@@ -11,6 +11,7 @@ import {
   taskStatusLabel,
   timeAgo,
 } from "@/components/format";
+import { useLaunchGuard } from "@/components/launch";
 import { useConfirm } from "@/components/ui";
 import type { AppSettings, Project, Run, Task } from "@/lib/types";
 
@@ -270,12 +271,24 @@ function QueueItem({
   const [when, setWhen] = useState("");
   const [busy, setBusy] = useState(false);
   const { confirm, dialog } = useConfirm();
+  const { guard, dialog: launchDialog } = useLaunchGuard();
 
   const run = async () => {
+    const mode = await guard(task.project_id);
+    if (mode === null) return;
+    const worktree = mode === "worktree";
     setBusy(true);
     try {
-      const r = await api.post(`/api/tasks/${task.id}/run`);
-      onChanged(r.started ? "Run iniciado" : r.queued ? "En cola" : r.reason);
+      const r = await api.post(`/api/tasks/${task.id}/run`, { worktree });
+      onChanged(
+        r.started
+          ? worktree
+            ? "Run iniciado (worktree)"
+            : "Run iniciado"
+          : r.queued
+            ? "En cola"
+            : r.reason,
+      );
     } catch (e) {
       onChanged((e as Error).message);
     } finally {
@@ -394,6 +407,7 @@ function QueueItem({
         </button>
       </div>
       {dialog}
+      {launchDialog}
     </div>
   );
 }

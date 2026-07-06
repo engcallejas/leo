@@ -22,14 +22,16 @@ export async function POST(req: Request, { params }: Ctx) {
   let compact = false;
   let prMode: PrMode = "commit";
   let images: AttachedImage[] = [];
+  let worktree = false;
   const ctype = req.headers.get("content-type") || "";
+  const truthy = (v: unknown) => v === true || v === "1" || v === "true";
 
   try {
     if (ctype.includes("multipart/form-data")) {
       const form = await req.formData();
       instruction = String(form.get("instruction") ?? "").trim();
-      const c = String(form.get("compact") ?? "");
-      compact = c === "1" || c === "true";
+      compact = truthy(form.get("compact"));
+      worktree = truthy(form.get("worktree"));
       if (form.get("prMode") === "new_pr") prMode = "new_pr";
       images = await saveUploadedImages(filesFromForm(form), `run-iter-${runId}`);
     } else {
@@ -37,9 +39,11 @@ export async function POST(req: Request, { params }: Ctx) {
         instruction?: unknown;
         compact?: unknown;
         prMode?: unknown;
+        worktree?: unknown;
       };
       instruction = String(body.instruction ?? "").trim();
       compact = body.compact === true;
+      worktree = truthy(body.worktree);
       if (body.prMode === "new_pr") prMode = "new_pr";
     }
   } catch (e) {
@@ -52,6 +56,7 @@ export async function POST(req: Request, { params }: Ctx) {
       compact,
       prMode,
       images,
+      worktree,
     });
     return json(runRow, 201);
   } catch (e) {

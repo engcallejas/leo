@@ -1,13 +1,17 @@
+import fs from "fs";
 import { listAccounts } from "../account-repo";
 import { assertRunnable } from "../claude-auth";
 import { getProvider } from "../integrations";
 import {
   claimTaskForRun,
+  clearRunWorktreePath,
+  getProject,
   getResolvedProject,
   getTask,
   listIntegrations,
   listProjects,
   listRuns,
+  listStaleWorktreeRuns,
   listTasks,
   prunePendingSourceTasks,
   queueTask,
@@ -21,6 +25,30 @@ import { chainTick, startTaskOrChain } from "./chain-runner";
 import { planTick } from "./plan-runner";
 import { reconcileRefinements } from "./planner";
 import { activeRunCount, reconcileRunningRuns } from "./runner";
+import { removeRunWorktree } from "./worktree";
+
+// Isolated worktrees are kept for inspection/resume, then garbage-collected once
+// their run finished more than this many days ago.
+const WORKTREE_TTL_DAYS = 15;
+const WORKTREE_GC_INTERVAL_MS = 60 * 60 * 1000; // sweep at most hourly
+
+/** Remove worktrees whose run finished > WORKTREE_TTL_DAYS ago; forget the path. */
+async function gcWorktrees(): Promise<void> {
+  const stale = await listStaleWorktreeRuns(WORKTREE_TTL_DAYS);
+  for (const s of stale) {
+    const proj = await getProject(s.project_id);
+    if (proj) {
+      removeRunWorktree(proj.repo_path, s.worktree_path);
+    } else {
+      try {
+        fs.rmSync(s.worktree_path, { recursive: true, force: true });
+      } catch {
+        /* ignore */
+      }
+    }
+    await clearRunWorktreePath(s.id).catch(() => {});
+  }
+}
 
 const globalForSched = globalThis as unknown as {
   __leoScheduler?: {
@@ -28,6 +56,7 @@ const globalForSched = globalThis as unknown as {
     timer: NodeJS.Timeout | null;
     lastTickAt: string | null;
     lastError: string | null;
+    lastWorktreeGcAt: number;
   };
 };
 
@@ -38,6 +67,7 @@ const state =
     timer: null,
     lastTickAt: null,
     lastError: null,
+    lastWorktreeGcAt: 0,
   });
 
 export function schedulerStatus() {
@@ -249,6 +279,14 @@ async function tick(): Promise<{ sourcesPolled: number; started: number }> {
     state.lastError = `enqueue: ${(e as Error).message}`;
     return 0;
   });
+  // Sweep stale worktrees at most hourly (cheap DB check, no-op most ticks).
+  const now = Date.now();
+  if (now - state.lastWorktreeGcAt >= WORKTREE_GC_INTERVAL_MS) {
+    state.lastWorktreeGcAt = now;
+    await gcWorktrees().catch((e) => {
+      state.lastError = `gcWorktrees: ${(e as Error).message}`;
+    });
+  }
   state.lastTickAt = new Date().toISOString();
   return { sourcesPolled: poll.sourcesPolled, started };
 }
@@ -276,7 +314,10 @@ export async function pollNow(): Promise<{
 }
 
 /** Run (or queue) a single task on demand, ignoring auto_mode. */
-export async function startTaskRun(taskId: number): Promise<{
+export async function startTaskRun(
+  taskId: number,
+  opts?: { worktree?: boolean },
+): Promise<{
   started: boolean;
   queued: boolean;
   run?: Run;
@@ -306,15 +347,22 @@ export async function startTaskRun(taskId: number): Promise<{
   const projectBusy =
     (await listRuns({ status: "running", project_id: project.id, limit: 1 }))
       .length > 0;
-  // No free slot for this account, or this project is already running → queue
-  // it (runs ASAP, in order). Clear any schedule since the user asked for now.
-  if (accountRunning >= settings.max_concurrent_runs || projectBusy) {
+  // The account cap always applies. The per-project "one run at a time" guard is
+  // bypassed for worktree runs — they execute in an isolated checkout, so they
+  // can run in parallel with the run already in flight on this repo.
+  const wantWorktree = !!opts?.worktree;
+  if (
+    accountRunning >= settings.max_concurrent_runs ||
+    (projectBusy && !wantWorktree)
+  ) {
     await queueTask(taskId, null);
     return { started: false, queued: true };
   }
   if (await claimTaskForRun(taskId)) {
     // ClickUp tasks with subtasks expand into a shared-branch chain (no single run).
-    const res = await startTaskOrChain(task, project);
+    const res = await startTaskOrChain(task, project, {
+      worktree: wantWorktree,
+    });
     return { started: true, queued: false, run: res.run ?? undefined };
   }
   return { started: false, queued: false, reason: "No se pudo reclamar la tarea" };

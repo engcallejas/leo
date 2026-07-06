@@ -8,6 +8,11 @@ export const BOARD_COLUMNS: {
 }[] = [
   { key: "fuentes", label: "Fuentes", hint: "Desde las fuentes · negocio" },
   { key: "planeacion", label: "Planeación", hint: "Refinamiento técnico" },
+  {
+    key: "backlog",
+    label: "Por desarrollar",
+    hint: "Listas · estados que escuchamos",
+  },
   { key: "cola", label: "Cola", hint: "Cola de trabajo" },
   { key: "ejecucion", label: "Ejecución", hint: "En progreso" },
   { key: "revision", label: "Revisión", hint: "Cerrar o iterar" },

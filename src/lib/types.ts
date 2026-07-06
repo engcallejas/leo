@@ -200,6 +200,8 @@ export interface Run {
   result_summary: string | null;
   error: string | null;
   log_path: string;
+  /** Isolated git worktree this run executed in (parallel run on a busy repo); null = ran in the repo itself. */
+  worktree_path: string | null;
   started_at: string;
   finished_at: string | null;
 }
@@ -317,8 +319,18 @@ export interface PlanStep {
   updated_at: string;
 }
 
+/** A free-text comment the human left on a plan to steer the next refinement. */
+export interface PlanComment {
+  id: number;
+  plan_id: number;
+  body: string;
+  created_at: string;
+}
+
 export interface PlanWithSteps extends Plan {
   steps: PlanStep[];
+  /** Feedback comments, oldest first — the thread of requested refinements. */
+  comments: PlanComment[];
 }
 
 /** An image/file attached to a plan so Claude can read it (mockups, screenshots). */
@@ -349,10 +361,11 @@ export interface AppSettings {
 
 // ---------- board (kanban) ----------
 
-/** The six lanes of the unified orchestration board, in flow order. */
+/** The lanes of the unified orchestration board, in flow order. */
 export type BoardColumn =
   | "fuentes" // raw source items (business inbox) — editable + sync to source
   | "planeacion" // technical refinement (draft/refining/refined plans)
+  | "backlog" // pending dev/manual tasks ready to run (listened states: to-do / ready-for-dev)
   | "cola" // accepted into the work queue (queued)
   | "ejecucion" // a run is in flight
   | "revision" // done/dispatched/failed — close or iterate
@@ -387,6 +400,10 @@ export interface BoardCard {
   /** Execution: the latest run for this card, if any. */
   run_id?: number | null;
   run_status?: RunStatus | null;
+  /** The referenced run is a re-iteration (continues a previous finished run). */
+  is_iteration?: boolean;
+  /** The run is executing in an isolated git worktree (parallel on a busy repo). */
+  is_worktree?: boolean;
   /** Needs-attention flag (a failed plan/task) — rendered in Revisión. */
   failed: boolean;
   /** Explicitly closed/archived. */

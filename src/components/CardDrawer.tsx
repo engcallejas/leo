@@ -28,6 +28,7 @@ export type CardAction =
   | "promote"
   | "enqueue"
   | "run"
+  | "retry"
   | "cancel"
   | "close"
   | "reopen"
@@ -314,6 +315,38 @@ function TaskFacet({
             </button>
           </>
         )}
+        {card.column === "backlog" && (
+          <>
+            <button
+              className="btn btn-primary"
+              disabled={busy}
+              onClick={() => onAction(card, "run")}
+            >
+              Ejecutar ahora
+            </button>
+            <button
+              className="btn"
+              disabled={busy}
+              onClick={() => onAction(card, "enqueue")}
+            >
+              Encolar
+            </button>
+            <button
+              className="btn"
+              disabled={busy}
+              onClick={() => onAction(card, "promote")}
+            >
+              Promover a planeación
+            </button>
+            <button
+              className="btn"
+              disabled={busy}
+              onClick={() => onAction(card, "discard")}
+            >
+              Descartar (no ejecutar)
+            </button>
+          </>
+        )}
         {card.column === "cola" && (
           <button
             className="btn btn-primary"
@@ -330,13 +363,23 @@ function TaskFacet({
         )}
         {card.column === "revision" && (
           <>
+            {card.failed && (
+              <button
+                className="btn btn-primary"
+                disabled={busy}
+                onClick={() => onAction(card, "retry")}
+                title="Vuelve a ejecutar esta tarea desde cero"
+              >
+                ↻ Reintentar
+              </button>
+            )}
             {card.run_id && (
               <Link className="btn" href={`/runs/${card.run_id}`}>
                 Ver ejecución / iterar →
               </Link>
             )}
             <button
-              className="btn btn-primary"
+              className={card.failed ? "btn" : "btn btn-primary"}
               disabled={busy}
               onClick={() => onAction(card, "close")}
             >
@@ -464,6 +507,32 @@ function PlanFacet({
             </Link>
           </>
         )}
+        {card.column === "backlog" && (
+          <>
+            {card.status === "dispatched" && (
+              <button className="btn" disabled={busy} onClick={checkClickUp}>
+                Comprobar estado en ClickUp
+              </button>
+            )}
+            <Link className="btn" href={`/plans/${card.id}`}>
+              Abrir planeación →
+            </Link>
+            <button
+              className="btn"
+              disabled={busy}
+              onClick={() => onAction(card, "cancel")}
+            >
+              Devolver a refinado
+            </button>
+            <button
+              className="btn btn-primary"
+              disabled={busy}
+              onClick={() => onAction(card, "close")}
+            >
+              Cerrar
+            </button>
+          </>
+        )}
         {card.column === "cola" && (
           <>
             <button
@@ -503,11 +572,6 @@ function PlanFacet({
         )}
         {card.column === "revision" && (
           <>
-            {card.status === "dispatched" && (
-              <button className="btn" disabled={busy} onClick={checkClickUp}>
-                Comprobar estado en ClickUp
-              </button>
-            )}
             {card.run_id && (
               <Link className="btn" href={`/runs/${card.run_id}`}>
                 Ver ejecución / iterar →

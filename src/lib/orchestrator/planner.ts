@@ -12,6 +12,7 @@ import {
   getPlan,
   listAttachments,
   listPlans,
+  listSteps,
   replaceSteps,
   updatePlan,
 } from "../plan-repo";
@@ -97,6 +98,14 @@ async function fetchSeedContext(plan: Plan): Promise<string> {
   return "";
 }
 
+/** When set, the refinement REVISES an existing plan instead of building one
+ *  from the seed — Claude is given its previous output plus the human's feedback. */
+interface RefineIteration {
+  feedback: string;
+  refinedSpec: string;
+  steps: { title: string; spec: string }[];
+}
+
 function buildRefinePrompt(
   project: Project,
   plan: Plan,
@@ -105,6 +114,7 @@ function buildRefinePrompt(
   attachmentBlock: string,
   interactive: boolean,
   framework: SpecFramework | null,
+  iteration: RefineIteration | null,
 ): string {
   const sourceLabel =
     plan.source_type === "manual"
@@ -147,6 +157,25 @@ function buildRefinePrompt(
     );
   }
 
+  if (iteration) {
+    const stepsBlock = iteration.steps.length
+      ? iteration.steps
+          .map(
+            (s, i) =>
+              `### Step ${i + 1}: ${s.title}\n${s.spec || "(no detail)"}`,
+          )
+          .join("\n\n")
+      : "(no steps yet)";
+    sections.push(
+      `\n## Current plan (your previous output — REVISE this, do not start over)`,
+      `Refined requirement so far:\n${iteration.refinedSpec.trim() || "(empty)"}`,
+      `\nSteps so far:\n${stepsBlock}`,
+      `\n## Requested changes (human feedback)`,
+      `The human reviewed the plan above and asks for the following. Treat this as the priority for this revision:`,
+      iteration.feedback.trim(),
+    );
+  }
+
   if (interactive) {
     const frameworkNote = framework
       ? ` Frame your questions around the ${framework.label} expectations above.`
@@ -162,15 +191,29 @@ function buildRefinePrompt(
     );
   }
 
+  if (iteration) {
+    sections.push(
+      `\n## Your job (REVISION)`,
+      `You already produced the plan shown in "Current plan". The human reviewed it and left "Requested changes". Revise the plan to fully address that feedback — do NOT rebuild it from the seed.`,
+      `1. Investigate ONLY the parts of the codebase needed to act on the feedback. Read efficiently; don't re-read everything. As soon as you can satisfy the feedback, STOP and output the plan.`,
+      `2. PRESERVE everything that already works: keep the existing refined requirement and steps intact except where the feedback requires a change (or where a change is needed to satisfy it). Do not regress, drop detail, or rephrase for its own sake.`,
+      `3. Keep the same step-granularity philosophy: DEFAULT TO A SINGLE STEP; only split into multiple steps for genuinely independent, separately-shippable FEATURE slices. NEVER create steps for tests, validations, type-checks, commits, pushes, review, or the PR — those finish every step.`,
+      `4. Re-output the COMPLETE updated plan — the full refined requirement and ALL steps (including the ones you left unchanged), in the SAME JSON format below. Do not output a diff or partial plan.`,
+    );
+  } else {
+    sections.push(
+      `\n## Your job`,
+      `1. Investigate the relevant parts of the codebase to ground the work in reality (which files/modules change, existing patterns, the validations that must pass). Be EFFICIENT: read only the few files you actually need; do NOT exhaustively read tests or unrelated modules. As soon as you understand the change, STOP reading and output the plan — you have a limited number of steps.`,
+      `2. Produce a precise, unambiguous refined requirement that removes guesswork for the implementing agent.`,
+      `3. Decide the MINIMUM number of steps. DEFAULT TO A SINGLE STEP. Most tasks are one step.`,
+      `   Only split into multiple steps when the work is genuinely large and made of independent units of FEATURE work that each deserve their own session and Pull Request (e.g. a backend change that can ship separately from a later frontend change). When unsure, use ONE step.`,
+      `   CRITICAL — never create separate steps for: writing tests, running validations/linters, type-checking, committing, pushing, code review, or opening the PR. Those are part of FINISHING EVERY step — the executing agent always runs this project's validations and finalization contract on each step. So a normal change (e.g. "embed a responsive video on a page", "fix a bug", "add a field") is exactly ONE step that already includes its tests, validations, commit and PR.`,
+      `   A step must be a meaningful, independently-shippable slice of the feature — never a phase ("implement", then "test", then "validate", then "commit") of the same change. If your steps would each touch the same change or only differ by lifecycle phase, collapse them into one.`,
+      `   For each step give a short imperative title and a DETAILED spec: what to change, where (files/modules), and acceptance criteria.`,
+    );
+  }
+
   sections.push(
-    `\n## Your job`,
-    `1. Investigate the relevant parts of the codebase to ground the work in reality (which files/modules change, existing patterns, the validations that must pass). Be EFFICIENT: read only the few files you actually need; do NOT exhaustively read tests or unrelated modules. As soon as you understand the change, STOP reading and output the plan — you have a limited number of steps.`,
-    `2. Produce a precise, unambiguous refined requirement that removes guesswork for the implementing agent.`,
-    `3. Decide the MINIMUM number of steps. DEFAULT TO A SINGLE STEP. Most tasks are one step.`,
-    `   Only split into multiple steps when the work is genuinely large and made of independent units of FEATURE work that each deserve their own session and Pull Request (e.g. a backend change that can ship separately from a later frontend change). When unsure, use ONE step.`,
-    `   CRITICAL — never create separate steps for: writing tests, running validations/linters, type-checking, committing, pushing, code review, or opening the PR. Those are part of FINISHING EVERY step — the executing agent always runs this project's validations and finalization contract on each step. So a normal change (e.g. "embed a responsive video on a page", "fix a bug", "add a field") is exactly ONE step that already includes its tests, validations, commit and PR.`,
-    `   A step must be a meaningful, independently-shippable slice of the feature — never a phase ("implement", then "test", then "validate", then "commit") of the same change. If your steps would each touch the same change or only differ by lifecycle phase, collapse them into one.`,
-    `   For each step give a short imperative title and a DETAILED spec: what to change, where (files/modules), and acceptance criteria.`,
     `\n## Output format (REQUIRED)`,
     `When your analysis is complete, end your message with a SINGLE fenced json code block and nothing after it:`,
     "```json",
@@ -372,14 +415,37 @@ function watchRefinement(planId: number, pid: number, logPath: string): void {
   setTimeout(tick, 2000);
 }
 
-/** Kick off a refinement run for a plan. Returns the updated plan. */
-export async function startRefinement(planId: number): Promise<Plan> {
+/**
+ * Kick off a refinement run for a plan. Returns the updated plan.
+ *
+ * With `opts.feedback`, runs in ITERATION mode: Claude is given its previous
+ * output (refined spec + steps) plus the feedback and asked to revise in place,
+ * instead of rebuilding from the seed. Falls back to a from-scratch refinement
+ * if there's no existing output to revise.
+ */
+export async function startRefinement(
+  planId: number,
+  opts?: { feedback?: string },
+): Promise<Plan> {
   const plan = await getPlan(planId);
   if (!plan) throw new Error("Plan no encontrado");
   if (plan.status === "refining" || refinePids.has(planId)) return plan;
 
   const project = await getResolvedProject(plan.project_id);
   if (!project) throw new Error("Proyecto no encontrado");
+
+  // Iterate on the existing output only when there IS one; otherwise feedback on
+  // a draft just seeds a normal first refinement.
+  const feedback = opts?.feedback?.trim() ?? "";
+  const currentSteps = feedback ? await listSteps(planId) : [];
+  const iteration: RefineIteration | null =
+    feedback && (plan.refined_spec.trim().length > 0 || currentSteps.length > 0)
+      ? {
+          feedback,
+          refinedSpec: plan.refined_spec,
+          steps: currentSteps.map((s) => ({ title: s.title, spec: s.spec })),
+        }
+      : null;
 
   if (!fs.existsSync(project.repo_path)) {
     return (await updatePlan(planId, {
@@ -410,6 +476,7 @@ export async function startRefinement(planId: number): Promise<Plan> {
     attachmentBlock,
     interactive,
     framework,
+    iteration,
   );
   const extras = buildRunExtras({
     project,
@@ -435,6 +502,7 @@ export async function startRefinement(planId: number): Promise<Plan> {
     auth_method: exec.method,
     model: exec.model,
     prompt,
+    ...(iteration ? { feedback: iteration.feedback } : {}),
   });
 
   let out: number;

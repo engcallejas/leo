@@ -624,6 +624,7 @@ function mapRun(r: RunRow): Run {
     result_summary: (r.result_summary as string) ?? null,
     error: (r.error as string) ?? null,
     log_path: String(r.log_path),
+    worktree_path: (r.worktree_path as string) ?? null,
     started_at: String(r.started_at),
     finished_at: (r.finished_at as string) ?? null,
   };
@@ -640,6 +641,30 @@ export async function createRun(input: {
     [input.task_id, input.project_id, input.parent_run_id ?? null, input.log_path],
   );
   return (await getRun(res.lastInsertRowid))!;
+}
+
+/** Runs whose isolated worktree is older than N days and safe to GC (finished). */
+export async function listStaleWorktreeRuns(
+  olderThanDays: number,
+): Promise<{ id: number; project_id: number; worktree_path: string }[]> {
+  const rows = await query<Record<string, unknown>>(
+    `SELECT id, project_id, worktree_path FROM runs
+       WHERE worktree_path IS NOT NULL
+         AND status != 'running'
+         AND finished_at IS NOT NULL
+         AND finished_at <= datetime('now', ?)`,
+    [`-${Math.max(0, Math.floor(olderThanDays))} days`],
+  );
+  return rows.map((r) => ({
+    id: Number(r.id),
+    project_id: Number(r.project_id),
+    worktree_path: String(r.worktree_path),
+  }));
+}
+
+/** Forget a run's worktree path once the worktree has been removed from disk. */
+export async function clearRunWorktreePath(id: number): Promise<void> {
+  await run("UPDATE runs SET worktree_path = NULL WHERE id = ?", [id]);
 }
 
 export async function getRun(id: number): Promise<Run | null> {
@@ -659,6 +684,7 @@ export async function updateRun(
     exit_code: number | null;
     result_summary: string | null;
     error: string | null;
+    worktree_path: string | null;
     finished: boolean;
   }>,
 ): Promise<void> {
@@ -678,6 +704,8 @@ export async function updateRun(
   if (patch.result_summary !== undefined)
     push("result_summary", patch.result_summary);
   if (patch.error !== undefined) push("error", patch.error);
+  if (patch.worktree_path !== undefined)
+    push("worktree_path", patch.worktree_path);
   if (patch.finished) sets.push("finished_at = datetime('now')");
   if (sets.length === 0) return;
   await run(`UPDATE runs SET ${sets.join(", ")} WHERE id = ?`, [...args, id]);

@@ -150,7 +150,12 @@ function formatRefineLine(line: string): Entry | null {
     return null;
   }
   const type = e.type as string;
-  if (type === "leo_refine_start") return { kind: "start", text: "iniciando análisis del repo…" };
+  if (type === "leo_refine_start") {
+    const fb = String(e.feedback ?? "").trim();
+    return fb
+      ? { kind: "ask", text: `iterando con tus comentarios: ${fb.slice(0, 200)}` }
+      : { kind: "start", text: "iniciando análisis del repo…" };
+  }
   if (type === "leo_refine_done") return { kind: "result", text: `plan generado (${e.steps ?? "?"} pasos)` };
   if (type === "leo_refine_error" || type === "leo_error")
     return { kind: "error", text: String(e.message ?? "error en el refinamiento") };

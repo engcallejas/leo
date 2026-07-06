@@ -20,11 +20,34 @@ mid-run, and iterates on results (resume / compact / new PR). Success: the
 operator can see a run's state at a glance, understand what happened, correct it,
 and continue — without digging.
 
+Refinement is **iterative, not one-shot**: once a plan is refined, the operator
+can leave free-text comments ("Refinar con comentarios") and Claude revises the
+*existing* spec + steps to address them instead of starting from the seed.
+Comments are kept as a thread so the conversation that shaped a plan stays
+visible. "Rehacer desde cero" remains available (with a confirm) for a clean
+restart.
+
 The **Tablero** (Kanban board) is the single end-to-end surface: one card per
-unit of work moving through six lanes — Fuentes (source inbox, editable + synced
-back to the source) → Planeación (technical refinement) → Cola (work queue) →
-Ejecución (live run) → Revisión (close or iterate) → Cerrada. Cards drag to
-advance one legal step at a time; heavy steps (run, cancel) confirm first.
+unit of work moving through seven lanes — Fuentes (source inbox, editable +
+synced back to the source) → Planeación (technical refinement) → Por desarrollar
+(refined/dispatched work in the listened "to-do / ready for develop" states —
+pending dev/manual tasks and plans handed to the ClickUp dev flow; mirrors the
+Dashboard's "Cola de tareas") → Cola (work queue) → Ejecución (live run) →
+Revisión (close or iterate) → Cerrada. Cards drag to advance one legal step at a
+time; heavy steps (run, cancel) confirm first. **Iterations show in the flow**:
+re-running a finished card moves it back to Ejecución with a ↻ badge carrying the
+iteration's run id, then returns it to Revisión when it finishes. A **failed** run
+or card can be **retried** (↻ Reintentar on the run page and on the Revisión card
+drawer) — it re-runs the task from scratch.
+
+**Parallel runs & worktrees.** By default one run executes per repo at a time
+(the next is queued). Launching a run while its repo is already busy prompts to
+isolate it in a **git worktree** — a parallel checkout on its own `leo/run-<id>`
+branch, so it can't clobber the run in flight. With more than one concurrent run
+configured (`max_concurrent_runs > 1`) the worktree is the default choice.
+Worktrees need a **git repo**: if the project's `repo_path` isn't one, the
+worktree option isn't offered (it just runs in place). Worktrees are kept for
+inspection/resume and garbage-collected 15 days after the run finishes.
 
 ## Cuentas (workspaces)
 

@@ -38,6 +38,10 @@ export function planColumn(p: Plan): BoardColumn {
     case "running":
       return "ejecucion";
     case "dispatched":
+      // Handed to the ClickUp dev flow: it now lives in a listened "ready for
+      // develop" state (the dev source re-pulls it as a runnable task), so it
+      // belongs in the dev backlog, not in review.
+      return "backlog";
     case "done":
     case "failed":
       return "revision";
@@ -53,7 +57,11 @@ export function taskColumn(t: Task): BoardColumn {
     case "cancelled":
       return "cerrada";
     case "pending":
-      return "fuentes";
+      // Planning-only items are the business inbox (Fuentes, to be refined).
+      // Everything else that's runnable (development/both/manual) sits in the
+      // dev backlog — the "to-do / ready for develop" lane the scheduler listens
+      // to — matching the Dashboard's "Cola de tareas".
+      return t.source_role === "planning" ? "fuentes" : "backlog";
     case "queued":
       return "cola";
     case "running":
@@ -131,11 +139,23 @@ export async function assembleBoard(
     if (s.task_id != null) stepTaskIds.add(s.task_id);
   }
 
-  // Latest run per task (runs come ordered id DESC, so first seen wins).
-  const latestRunByTask = new Map<number, { id: number; status: RunStatus }>();
+  // Latest run per task (runs come ordered id DESC, so first seen wins). We keep
+  // enough to reflect iterations (parent_run_id) and worktree runs on the board.
+  type RunLite = {
+    id: number;
+    status: RunStatus;
+    parent_run_id: number | null;
+    worktree_path: string | null;
+  };
+  const latestRunByTask = new Map<number, RunLite>();
   for (const r of runs) {
     if (!latestRunByTask.has(r.task_id)) {
-      latestRunByTask.set(r.task_id, { id: r.id, status: r.status });
+      latestRunByTask.set(r.task_id, {
+        id: r.id,
+        status: r.status,
+        parent_run_id: r.parent_run_id,
+        worktree_path: r.worktree_path,
+      });
     }
   }
 
@@ -154,11 +174,22 @@ export async function assembleBoard(
     const steps = stepsByPlan.get(p.id) ?? [];
     const total = steps.length;
     const done = steps.filter((s) => s.status === "done").length;
-    let runRef: { id: number; status: RunStatus } | undefined;
-    const running = steps.find(
-      (s) => s.status === "running" && s.task_id != null,
-    );
-    if (running?.task_id != null) runRef = latestRunByTask.get(running.task_id);
+
+    // A running run on any of this plan's step tasks means the plan is actively
+    // executing right now — including an ITERATION kicked off after the plan
+    // already finished (which doesn't change plan.status). Surface it so the
+    // card moves to Ejecución and shows the iteration instead of sitting silently
+    // in Revisión.
+    let activeRun: RunLite | undefined;
+    for (const s of steps) {
+      if (s.task_id == null) continue;
+      const lr = latestRunByTask.get(s.task_id);
+      if (lr?.status === "running") {
+        activeRun = lr;
+        break;
+      }
+    }
+    let runRef = activeRun;
     if (!runRef) {
       for (let i = steps.length - 1; i >= 0; i--) {
         const tid = steps[i].task_id;
@@ -168,26 +199,33 @@ export async function assembleBoard(
         }
       }
     }
+
+    const closed = !!p.closed_at || p.status === "cancelled";
+    const column: BoardColumn =
+      activeRun && !closed ? "ejecucion" : planColumn(p);
+    const isIteration = (runRef?.parent_run_id ?? null) != null;
     cards.push({
       key: `plan-${p.id}`,
       kind: "plan",
       id: p.id,
-      column: planColumn(p),
+      column,
       title: p.title,
       project_id: p.project_id,
       project_name: projName.get(p.project_id) ?? `#${p.project_id}`,
       source_type: p.source_type,
       source_url: p.source_url,
       status: p.status,
-      sub: subForPlan(p, total, done),
+      sub: activeRun && isIteration ? "↻ iterando…" : subForPlan(p, total, done),
       date: p.created_at,
       updated_at: p.updated_at,
       steps_total: total,
       steps_done: done,
       run_id: runRef?.id ?? null,
       run_status: runRef?.status ?? null,
+      is_iteration: isIteration,
+      is_worktree: !!runRef?.worktree_path,
       failed: p.status === "failed",
-      closed: !!p.closed_at || p.status === "cancelled",
+      closed,
     });
   }
 
@@ -200,6 +238,8 @@ export async function assembleBoard(
       continue; // already represented by its plan
     }
     const runRef = latestRunByTask.get(t.id);
+    const isIteration = (runRef?.parent_run_id ?? null) != null;
+    const iterating = isIteration && runRef?.status === "running";
     cards.push({
       key: `task-${t.id}`,
       kind: "task",
@@ -211,11 +251,13 @@ export async function assembleBoard(
       source_type: t.source_type,
       source_url: t.url,
       status: t.status,
-      sub: t.source_type === "manual" ? "Manual" : null,
+      sub: iterating ? "↻ iterando…" : t.source_type === "manual" ? "Manual" : null,
       date: t.created_at,
       updated_at: t.updated_at,
       run_id: runRef?.id ?? null,
       run_status: runRef?.status ?? null,
+      is_iteration: isIteration,
+      is_worktree: !!runRef?.worktree_path,
       failed: t.status === "failed",
       closed: !!t.closed_at || t.status === "cancelled",
     });

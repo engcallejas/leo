@@ -183,6 +183,8 @@ export function migrate(): Promise<void> {
       await ensureColumn(db, "tasks", "chain_branch", "TEXT");
       // Iteration lineage: a run can continue a previous finished run.
       await ensureColumn(db, "runs", "parent_run_id", "INTEGER");
+      // Worktree runs: the isolated git worktree path this run executed in.
+      await ensureColumn(db, "runs", "worktree_path", "TEXT");
       // Steering notes can carry images (JSON array of {filename,path,mime}).
       await ensureColumn(db, "run_notes", "images", "TEXT");
       // Kanban board: explicit close/archive timestamp (terminal "Cerrada" lane).

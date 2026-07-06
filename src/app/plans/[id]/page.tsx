@@ -36,6 +36,7 @@ export default function PlanDetailPage() {
   const [devStatus, setDevStatus] = useState<string | null>(null);
   const [editing, setEditing] = useState(false);
   const [tab, setTab] = useState<"spec" | "steps" | "analysis" | null>(null);
+  const [feedback, setFeedback] = useState("");
   const dirty = useRef(false);
 
   const load = useCallback(async () => {
@@ -146,8 +147,8 @@ export default function PlanDetailPage() {
       await load();
     });
 
-  const refine = () =>
-    act("refine", async () => {
+  const refine = (fb?: string) =>
+    act(fb ? "iterate" : "refine", async () => {
       if (dirty.current) {
         await api.put(`/api/plans/${id}`, {
           title: plan.title,
@@ -155,11 +156,43 @@ export default function PlanDetailPage() {
         });
         dirty.current = false;
       }
-      const p = await api.post(`/api/plans/${id}/refine`);
-      setPlan(p.steps ? p : { ...plan, ...p, steps: plan.steps });
+      const p = await api.post(
+        `/api/plans/${id}/refine`,
+        fb ? { feedback: fb } : undefined,
+      );
+      // Optimistically thread the feedback so it shows before the next poll. The
+      // refine response is a Plan (no steps/comments); status flips to refining
+      // and the live poll then reloads the full plan once it lands.
+      const comments = fb
+        ? [
+            ...plan.comments,
+            {
+              id: -Date.now(),
+              plan_id: plan.id,
+              body: fb,
+              created_at: new Date().toISOString(),
+            },
+          ]
+        : plan.comments;
+      setPlan(p.steps ? p : { ...plan, ...p, steps: plan.steps, comments });
+      setFeedback("");
       // No toast: the "Refinando…" hero already communicates this, and a lingering
       // toast would reappear (stale) once refining ends.
     });
+
+  const refineFromScratch = async () => {
+    if (
+      hasRefined &&
+      !(await confirm({
+        title: "¿Rehacer desde cero?",
+        body: "Claude descartará el requerimiento y los pasos actuales y generará un plan nuevo a partir de la semilla. Tus comentarios no se reenvían. Si solo quieres ajustar algo, usa “Refinar con comentarios”.",
+        confirmLabel: "Rehacer desde cero",
+        danger: true,
+      }))
+    )
+      return;
+    refine();
+  };
 
   const addStep = () =>
     act("addStep", async () => {
@@ -401,7 +434,7 @@ export default function PlanDetailPage() {
         ) : inputPhase ? (
           <button
             className="btn btn-primary"
-            onClick={refine}
+            onClick={() => refine()}
             disabled={!!busy}
             style={{ fontSize: 14, padding: "9px 16px" }}
           >
@@ -446,11 +479,11 @@ export default function PlanDetailPage() {
             <div style={{ flex: 1 }} />
             <button
               className="btn btn-sm"
-              onClick={refine}
+              onClick={refineFromScratch}
               disabled={!!busy}
-              title="Vuelve a refinar desde cero con Claude"
+              title="Descarta el plan actual y genera uno nuevo desde la semilla. Para ajustes, usa “Refinar con comentarios” abajo."
             >
-              ↻ Re-refinar
+              {busy === "refine" ? "Rehaciendo…" : "↻ Rehacer desde cero"}
             </button>
             {(failed || cancelled) && (
               <button
@@ -533,6 +566,140 @@ export default function PlanDetailPage() {
         </Section>
       ) : (
         <>
+          {/* ---- ITERATE WITH COMMENTS (the primary way to refine an output) ---- */}
+          {!locked && !editing && (
+            <div
+              className="card"
+              style={{
+                padding: 16,
+                marginBottom: 16,
+                borderColor: "var(--accent)",
+                boxShadow: "inset 3px 0 0 var(--accent)",
+              }}
+            >
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 8,
+                  marginBottom: 4,
+                }}
+              >
+                <span style={{ fontSize: 15, fontWeight: 700 }}>
+                  ✦ Refinar con comentarios
+                </span>
+                {plan.comments.length > 0 && (
+                  <span className="badge" style={{ fontSize: 11 }}>
+                    {plan.comments.length}
+                  </span>
+                )}
+              </div>
+              <p
+                className="muted"
+                style={{ fontSize: 13, margin: "0 0 10px", lineHeight: 1.55 }}
+              >
+                ¿El plan va bien pero quieres ajustar algo? Escribe qué cambiar,
+                añadir o que Claude revise, y se itera sobre el plan actual — sin
+                empezar de cero.
+              </p>
+              <textarea
+                className="textarea"
+                style={{ minHeight: 90, fontFamily: "inherit", fontSize: 13.5 }}
+                value={feedback}
+                onChange={(e) => setFeedback(e.target.value)}
+                placeholder="Ej.: «Considera el caso sin sesión en el paso 2», «divide el paso 1 en backend y frontend», «agrega criterios de aceptación más estrictos»…"
+                onKeyDown={(e) => {
+                  if (
+                    (e.metaKey || e.ctrlKey) &&
+                    e.key === "Enter" &&
+                    feedback.trim()
+                  )
+                    refine(feedback);
+                }}
+              />
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 10,
+                  marginTop: 10,
+                  flexWrap: "wrap",
+                }}
+              >
+                <button
+                  className="btn btn-primary"
+                  onClick={() => refine(feedback)}
+                  disabled={!!busy || !feedback.trim()}
+                >
+                  {busy === "iterate"
+                    ? "Enviando…"
+                    : "✦ Refinar con estos comentarios"}
+                </button>
+                <span className="muted" style={{ fontSize: 12 }}>
+                  Claude relee el repo (solo lectura) y devuelve el plan
+                  revisado. ⌘/Ctrl+Enter para enviar.
+                </span>
+              </div>
+
+              {plan.comments.length > 0 && (
+                <div
+                  style={{
+                    marginTop: 14,
+                    borderTop: "1px solid var(--border)",
+                    paddingTop: 12,
+                  }}
+                >
+                  <div
+                    className="muted"
+                    style={{
+                      fontSize: 11.5,
+                      fontWeight: 700,
+                      textTransform: "uppercase",
+                      letterSpacing: "0.04em",
+                      marginBottom: 8,
+                    }}
+                  >
+                    Comentarios anteriores
+                  </div>
+                  <div style={{ display: "grid", gap: 8 }}>
+                    {plan.comments
+                      .slice()
+                      .reverse()
+                      .map((c) => (
+                        <div
+                          key={c.id}
+                          style={{
+                            padding: "8px 11px",
+                            borderRadius: 8,
+                            background: "var(--panel-2)",
+                            border: "1px solid var(--border)",
+                            display: "flex",
+                            justifyContent: "space-between",
+                            gap: 10,
+                            alignItems: "baseline",
+                          }}
+                        >
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <Markdown text={c.body} size={13} />
+                          </div>
+                          <span
+                            className="muted"
+                            style={{
+                              fontSize: 11,
+                              whiteSpace: "nowrap",
+                              flex: "0 0 auto",
+                            }}
+                          >
+                            {timeAgo(c.created_at)}
+                          </span>
+                        </div>
+                      ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
           {/* ---- REVIEW PHASE ---- */}
           {editing && (
             <div

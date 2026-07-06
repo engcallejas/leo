@@ -66,16 +66,19 @@ async function fetchSubtasks(
 export async function startTaskOrChain(
   task: Task,
   project: Project,
+  opts?: { worktree?: boolean },
 ): Promise<{ chained: boolean; run: Run | null }> {
   if (task.source_type === "clickup" && !task.parent_task_id) {
     const subs = await fetchSubtasks(task);
     if (subs.length > 0) {
+      // A subtask chain runs sequentially on one shared branch, so worktree
+      // isolation doesn't apply — ignore it and run the chain as usual.
       await markChainParent(task.id, branchFor(task)); // task stays 'running'
       await chainTick().catch(() => {});
       return { chained: true, run: null };
     }
   }
-  const run = await startRun(task, project);
+  const run = await startRun(task, project, undefined, undefined, opts);
   return { chained: false, run };
 }
 
